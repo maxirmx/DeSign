@@ -5,7 +5,7 @@ program DeSign;
 uses
   SysUtils,
   Windows,
-  JwaWinCrypt,
+  JwaWinCrypt in 'JwaWinCrypt.pas',
   CertOptionsList in 'CertOptionsList.pas';
 
 procedure PrintHexWithColons(const Data: TByteArray);
@@ -27,15 +27,16 @@ var
   I: Integer;
   CertOption: TCertOption;
 begin
-  Writeln('‘ЇЁб®Є бҐавЁдЁЄ в®ў, Є®в®алҐ Ї®¤¤Ґа¦Ёў ов иЁда®ў ­ЁҐ Ї®  «Ј®аЁв¬ ¬ ѓЋ‘’');
+  Writeln('Сертификаты, которые поддерживают шифрование по алгоритмам ГОСТ');
   try
-    CertOptions := GetCertificates('1.2.643');
+    CertOptions := GetCertificates('1.2.643');  // Стандарт.ИСО.Россия = ГОСТ
     try
       for I := 0 to CertOptions.GetCertCount - 1 do
       begin
+        Writeln('Номер: ', I);
         CertOption := CertOptions.GetCertOption(I);
-        Writeln('€¬п ў« ¤Ґ«мж : ', CertOption.FriendlyName);
-        Write('“­ЁЄ «м­л© ®вЇҐз в®Є: ');
+        Writeln('Имя владельца: ', CertOption.FriendlyName);
+        Write('Уникальный идентификатор: ');
         PrintHexWithColons(CertOption.Thumbprint);
         Writeln;
       end;
