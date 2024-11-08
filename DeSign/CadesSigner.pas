@@ -41,7 +41,10 @@ type
   end;
 
 function GetCertificates(const Prefix: string): TList;
-function SignFile(const FilePath: string; const Thumbprint: T20Bytes): string;
+function SignFile(
+  const FilePath: string;
+  const thumbprint: T20Bytes;
+  const password: string) : string ;
 
 implementation
 
@@ -60,6 +63,9 @@ const
   // Не должно случиться, разве что безумный race condition будет
   ERR_FILE_EXISTS = 'Файл подписи с таким именем уже существует: ';
   ERR_FILE_SIGN_FAILED  = 'Не удалось подписать файл';
+  ERR_GET_PROP_FAILED = 'Не удалось получить свойства криптопровайдера';
+  ERR_ACQ_CONETXT_FAILED = 'Не удалось получить контекст криптопровайдера';
+  ERR_SET_PIN_FAILED = 'Не удалось применить пароль ЭЦП ("ПИН")';
 
 constructor ECertificateException.Create(const Message: string);
 var
@@ -67,7 +73,9 @@ var
 begin
   FErrorCode := GetLastError;
   if FErrorCode <> 0 then
-    Msg := Format('%s [0x%s] %s', [Message, IntToHex(FErrorCode, 8), SysErrorMessage(FErrorCode)])
+    Msg :=
+      Format('%s [0x%s] %s',
+      [Message, IntToHex(FErrorCode, 8), SysErrorMessage(FErrorCode)])
   else
     Msg := Message; // Use the original message if there's no error code.
 
@@ -149,6 +157,67 @@ begin
     Result := CP_GOST_R3411_12_512
   else
     Result := '';
+end;
+
+//  SetPassword
+//  private
+//  применение пароля
+//  Параметры
+//      const PCCERT_CONTEXT - сертификат
+//      const password - пароль
+//  Исключение ECertificateException
+//      Если не удалось получить доступ к свойствам провайдера
+//      Если не удалось применит пароль
+
+procedure SetPassword(
+  const pCert: PCCERT_CONTEXT;
+  const password: string);
+var
+  pProvKey: PCRYPT_KEY_PROV_INFO;
+  dwProvKeyInfoSize: DWORD;
+  dwKeytype: DWORD;
+  hProvider: HCRYPTPROV;
+begin
+  pProvKey := nil;
+  dwProvKeyInfoSize := 0;
+  try
+    if not CertGetCertificateContextProperty(
+      pCert,
+      CERT_KEY_PROV_INFO_PROP_ID,
+      pProvKey,
+      dwProvKeyInfoSize) then
+      RaiseError(ERR_GET_PROP_FAILED);
+
+    GetMem(pProvKey, dwProvKeyInfoSize);
+    if not CertGetCertificateContextProperty(pCert,
+      CERT_KEY_PROV_INFO_PROP_ID,
+      pProvKey,
+      dwProvKeyInfoSize) then
+      RaiseError(ERR_GET_PROP_FAILED);
+
+      if pProvKey^.dwKeySpec = AT_SIGNATURE then
+        dwKeyType := PP_SIGNATURE_PIN
+      else
+        dwKeyType := PP_KEYEXCHANGE_PIN;
+
+    if not CryptAcquireContextW(
+      hProvider,
+      pProvKey^.pwszContainerName,
+      pProvKey^.pwszProvName,
+      pProvKey^.dwProvType,
+      CRYPT_MACHINE_KEYSET) then
+      RaiseError(ERR_ACQ_CONETXT_FAILED);
+
+    if not CryptSetProvParam(
+      hProvider,
+      dwKeyType,
+      PBYTE(password),
+      0) then
+      RaiseError(ERR_SET_PIN_FAILED);
+  finally
+    if Assigned(pProvKey) then
+      FreeMem(pProvKey);
+    end
 end;
 
 { File helpers }
@@ -368,6 +437,7 @@ end;
 //  Параметры
 //      const string FileName - путь к файлу
 //      const sring thumbprint - идентифкатор, по которому ищем сертификат
+//      const password - пароль; если это поле путое, применяться не будет
 //  Результат
 //      string путь к файлу с подписью
 //  Исключение ECertificateException
@@ -378,7 +448,10 @@ end;
 //      Если не удалось записать содержимое файла
 //      Если были проблемы с подписанием, например, не подошёл пароль
 
-function SignFile(const FilePath: string; const thumbprint: T20Bytes): string;
+function SignFile(
+  const FilePath: string;
+  const thumbprint: T20Bytes;
+  const password: string) : string ;
 var
   hStore: HCERTSTORE;
   pCertContext: PCCERT_CONTEXT;
@@ -473,6 +546,10 @@ begin
         end;
       end;
     end;
+
+
+    if password <> '' then
+      SetPassword(pCertContext, password);
 
     // Create signed message
     if not CadesSignMessage(
