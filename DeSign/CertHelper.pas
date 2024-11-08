@@ -121,7 +121,7 @@ end;
 //      OID алгоритме хеширования (см. GostOIDs.pas)
 //      Если алгоритм неизвестен, возвращает пустую строку
 
-function GetHashOid(const pCert: PCCERT_CONTEXT): AnsiString;
+function GetHashOid(const pCert: PCCERT_CONTEXT): string;
 var
   pKeyAlg: string;
 begin
@@ -222,7 +222,7 @@ end;
 //      Если не удалось создать файл
 //      Если не удалось записать содержимое файла
 
-procedure WriteFileContent(const FileName: string; const Data: PByte; const L: DWORD);
+procedure WriteFileContent(const FileName: string; const Data: PByte; const L: integer);
 var
   FileStream: TFileStream;
 begin
@@ -306,18 +306,7 @@ begin
           nil,
           FriendlyName,
           SizeOf(FriendlyName)) = 0 then
-      begin
-        if CertGetNameStringA(
-            pCertContext,
-            CERT_NAME_SIMPLE_DISPLAY_TYPE,
-            0,
-            nil,
-            FriendlyName,
-            SizeOf(FriendlyName)) = 0 then
-        begin
           RaiseError(ERR_GET_SUBJECT_FAILED);
-        end;
-      end;
 
       Size := SizeOf(Sha1Thumbprint);
       if not CertGetCertificateContextProperty(
@@ -371,8 +360,8 @@ var
   ppChainElement: ^PCERT_CHAIN_ELEMENT;
   pChainCertContext: PCCERT_CONTEXT;
 
+  //pSignCertContext: PCERT_CONTEXT;
   ppSignCertContext: ^PCERT_CONTEXT;
-
 begin
   hStore := nil;
   pCertContext := nil;
@@ -384,11 +373,19 @@ begin
     if hStore = nil then
       RaiseError(ERR_OPEN_STORE_FAILED);
 
+    // Signer certificate
     pCertContext := GetCertificateByThumbprint(hStore, Thumbprint);
+
+    // Signature file name
     SignatureFileName := GetUniqueSignatureFileName(FilePath);
+
+    // The data to be signed
     FileContent := ReadFileContent(FilePath);
+    pbToBeSigned := Pointer(FileContent);
+    cbToBeSigned := Length(FileContent);
 
     // Initialize sign parameters
+    // Standard wincert
     FillChar(SignPara, SizeOf(SignPara), 0);
     SignPara.cbSize := SizeOf(CRYPT_SIGN_MESSAGE_PARA);
     SignPara.dwMsgEncodingType := X509_ASN_ENCODING or PKCS_7_ASN_ENCODING;
@@ -396,18 +393,17 @@ begin
     SignPara.pSigningCert := pCertContext;
     SignPara.HashAlgorithm.pszObjId := PAnsiChar(GetHashOid(pCertContext));
 
+    // Cades
     FillChar(CadesSignPara, SizeOf(CadesSignPara), 0);
     CadesSignPara.dwSize := SizeOf(CadesSignPara);
     CadesSignPara.dwCadesType := CADES_BES;
 
+    // Wrapper
     FillChar(Para, SizeOf(Para), 0);
     Para.dwSize := SizeOf(CADES_SIGN_MESSAGE_PARA);
     Para.pSignMessagePara := @SignPara;
     Para.pCadesSignPara := @CadesSignPara;
 
-    // Prepare the data to be signed
-    pbToBeSigned := Pointer(FileContent);
-    cbToBeSigned := Length(FileContent);
 
     // Get certificate chain
     FillChar(ChainPara, SizeOf(ChainPara), 0);
@@ -432,20 +428,22 @@ begin
         GetMem(SignPara.rgpMsgCert, SignPara.cMsgCert * SizeOf(PCERT_CONTEXT));
 
         writeln('  ==> Chain certificates in SignPara: ', SignPara.cMsgCert);
-        SignPara.cMsgCert := 0;
-{        ppChainElement := @pChainContext.rgpChain^.rgpElement;
-        ppSignCertContext := @SignPara.rgpMsgCert;
+        //SignPara.cMsgCert := 0;
+        ppChainElement := pChainContext.rgpChain^.rgpElement;
+        ppSignCertContext := SignPara.rgpMsgCert;
 
         for i := 0 to SignPara.cMsgCert - 1 do
         begin
           pChainElement := ppChainElement^;
+          //pSignCertContext := ppSignCertContext^;
           writeln('CERT_CHAIN_ELEMENT ', i, ' cbSize=', pChainElement^.cbSize);
           pChainCertContext := pChainElement^.pCertContext;
           writeln('     CHAIN_CERT_CONTEXT hCertStore=', Format('%p', [pChainCertContext^.hCertStore]));
           ppSignCertContext^ := pChainElement^.pCertContext;
           Inc(ppChainElement);
           Inc(ppSignCertContext);
-        end; }
+        end;
+        //SignPara.cMsgCert := 0;
       end;
     end;
 
@@ -486,8 +484,8 @@ begin
     pSignedMessage^.cbData);
 
   finally
-    //if pChainContext <> nil then
-    //  CertFreeCertificateChain(pChainContext);
+    if pChainContext <> nil then
+      CertFreeCertificateChain(pChainContext);
     if pSignedMessage <> nil then
       CadesFreeBlob(pSignedMessage);
     if pCertContext <> nil then
