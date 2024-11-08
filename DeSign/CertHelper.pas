@@ -32,7 +32,7 @@ type
   ECertificateException = class(Exception);
 
 function GetCertificates(const Prefix: string): TList;
-procedure SignFile(const FilePath: string; const Thumbprint: T20Bytes);
+function SignFile(const FilePath: string; const Thumbprint: T20Bytes): string;
 
 
 implementation
@@ -63,22 +63,12 @@ const
 procedure RaiseError(const Message: string);
 var
   ErrorCode: DWORD;
-  ErrorMsg: PChar;
   FullMessage: string;
 begin
   ErrorCode := GetLastError;
-  FormatMessageA(
-      FORMAT_MESSAGE_ALLOCATE_BUFFER or
-      FORMAT_MESSAGE_FROM_SYSTEM or
-      FORMAT_MESSAGE_IGNORE_INSERTS,
-      nil,
-      ErrorCode,
-      LANG_NEUTRAL,
-      @ErrorMsg,
-      0,
-      nil);
-  FullMessage := Format('%s [%s] %s', [Message, IntToHex(ErrorCode, 8), ErrorMsg]);
-  LocalFree(HLOCAL(ErrorMsg));
+  FullMessage := Format(
+        '%s [0x%s] %s',
+        [Message, IntToHex(ErrorCode, 8), SysErrorMessage(ErrorCode)]);
   raise Exception.Create(FullMessage);
 end;
 
@@ -90,7 +80,7 @@ end;
 //  Поиск сертификата по Thumbprint
 //  Параметры
 //      const HCERTSTORE - хранилище сертификатов
-//      const thumbprint - thumbprint, по которому ищем
+//      const thumbprint - идентифкатор, по которому ищем сертификат
 //  Результат
 //      сертификат
 //      ВАЖНО !!! Сертификат существует в контексте хранилища
@@ -131,7 +121,7 @@ end;
 //      OID алгоритме хеширования (см. GostOIDs.pas)
 //      Если алгоритм неизвестен, возвращает пустую строку
 
-function GetHashOid(const pCert: PCCERT_CONTEXT): string;
+function GetHashOid(const pCert: PCCERT_CONTEXT): AnsiString;
 var
   pKeyAlg: string;
 begin
@@ -226,13 +216,13 @@ end;
 //  Запись массива байт в файла
 //  Параметры
 //      const string FileName - путь к файлу
-//      const TByteы Data - что писать
+//      const TByte Data - что писать
 //  Исключение ECertificateException
 //      Если файл с таким именем уже существует
 //      Если не удалось создать файл
 //      Если не удалось записать содержимое файла
 
-procedure WriteFileContent(const FileName: string; const Data: TBytes);
+procedure WriteFileContent(const FileName: string; const Data: PByte; const L: DWORD);
 var
   FileStream: TFileStream;
 begin
@@ -250,7 +240,7 @@ begin
   end;
 
   try
-    if FileStream.Write(Data[0], Length(Data)) <> Length(Data) then
+    if FileStream.Write(Data, L) <> L then
       RaiseError(ERR_FAILED_TO_WRITE + ' "' + FileName + '"');
   finally
     FileStream.Free;
@@ -359,24 +349,30 @@ begin
 end;
 
 
-procedure SignFile(const FilePath: string; const Thumbprint: T20Bytes);
+function SignFile(const FilePath: string; const Thumbprint: T20Bytes): string;
 var
   hStore: HCERTSTORE;
   pCertContext: PCCERT_CONTEXT;
   pSignedMessage: PCRYPT_DATA_BLOB;
-  pChainContext: PCCERT_CHAIN_CONTEXT;
+  pChainContext: PCERT_CHAIN_CONTEXT;
   Certs: TList;
-  SignPara: CRYPT_SIGN_MESSAGE_PARA;
-  CadesSignPara: CADES_SIGN_PARA;
-  Para: CADES_SIGN_MESSAGE_PARA;
+  SignPara: CRYPT_SIGN_MESSAGE_PARA;     // Msg
+  CadesSignPara: CADES_SIGN_PARA;        // MsgAdd
+  Para: CADES_SIGN_MESSAGE_PARA;         // MsgEx
   FileContent: TBytes;
   ChainPara: CERT_CHAIN_PARA;
   i: Integer;
   SignatureFileName: string;
   pbToBeSigned: PByte;
   cbToBeSigned: DWORD;
-  pElement: PCERT_CHAIN_ELEMENT;
-  item: CERT_CONTEXT;
+
+
+  pChainElement: PCERT_CHAIN_ELEMENT;
+  ppChainElement: ^PCERT_CHAIN_ELEMENT;
+  pChainCertContext: PCCERT_CONTEXT;
+
+  ppSignCertContext: ^PCERT_CONTEXT;
+
 begin
   hStore := nil;
   pCertContext := nil;
@@ -394,8 +390,9 @@ begin
 
     // Initialize sign parameters
     FillChar(SignPara, SizeOf(SignPara), 0);
-    SignPara.cbSize := SizeOf(SignPara);
+    SignPara.cbSize := SizeOf(CRYPT_SIGN_MESSAGE_PARA);
     SignPara.dwMsgEncodingType := X509_ASN_ENCODING or PKCS_7_ASN_ENCODING;
+    SignPara.pSigningCert := nil;
     SignPara.pSigningCert := pCertContext;
     SignPara.HashAlgorithm.pszObjId := PAnsiChar(GetHashOid(pCertContext));
 
@@ -404,12 +401,12 @@ begin
     CadesSignPara.dwCadesType := CADES_BES;
 
     FillChar(Para, SizeOf(Para), 0);
-    Para.dwSize := SizeOf(Para);
+    Para.dwSize := SizeOf(CADES_SIGN_MESSAGE_PARA);
     Para.pSignMessagePara := @SignPara;
-    Para.pCadesSignPara := nil; //@CadesSignPara;
+    Para.pCadesSignPara := @CadesSignPara;
 
     // Prepare the data to be signed
-    pbToBeSigned := @FileContent[0];
+    pbToBeSigned := Pointer(FileContent);
     cbToBeSigned := Length(FileContent);
 
     // Get certificate chain
@@ -427,17 +424,33 @@ begin
       nil,
       @pChainContext) then
     begin
-      pElement := pChainContext.rgpChain^.rgpElement^;
-      for i := 0 to pChainContext.rgpChain^.cElement - 2 do
+      if pChainContext.rgpChain^.cElement > 1 then
       begin
-//        Certs.Add(pChainContext.rgpChain^.rgpElement[i]^.pCertContext);
-        Certs.Add(pElement^.pCertContext);
-        Inc(pElement);
+        writeln('Elements in the chain: ', pChainContext.rgpChain^.cElement);
+
+        SignPara.cMsgCert := pChainContext.rgpChain^.cElement -1;
+        GetMem(SignPara.rgpMsgCert, SignPara.cMsgCert * SizeOf(PCERT_CONTEXT));
+
+        writeln('  ==> Chain certificates in SignPara: ', SignPara.cMsgCert);
+        SignPara.cMsgCert := 0;
+{        ppChainElement := @pChainContext.rgpChain^.rgpElement;
+        ppSignCertContext := @SignPara.rgpMsgCert;
+
+        for i := 0 to SignPara.cMsgCert - 1 do
+        begin
+          pChainElement := ppChainElement^;
+          writeln('CERT_CHAIN_ELEMENT ', i, ' cbSize=', pChainElement^.cbSize);
+          pChainCertContext := pChainElement^.pCertContext;
+          writeln('     CHAIN_CERT_CONTEXT hCertStore=', Format('%p', [pChainCertContext^.hCertStore]));
+          ppSignCertContext^ := pChainElement^.pCertContext;
+          Inc(ppChainElement);
+          Inc(ppSignCertContext);
+        end; }
       end;
     end;
 
     // Add certificates (without root) to message
-    if Certs.Count > 0 then
+{    if Certs.Count > 0 then
     begin
       SignPara.cMsgCert := Certs.Count;
       GetMem(SignPara.rgpMsgCert, Certs.Count * SizeOf(CERT_CONTEXT));
@@ -454,20 +467,27 @@ begin
     Inc(SignPara.rgpMsgCert);
     end;
     end;
+ }
 
     // Create signed message
-    if not CadesSignMessage(@Para, false, 1, pbToBeSigned, cbToBeSigned, @pSignedMessage) then
-    begin
-      RaiseError(ERR_FILE_SIGN_FAILED);
-    end;
+    if not CadesSignMessage(
+      @Para,
+      false,
+      1,
+      @pbToBeSigned,
+      @cbToBeSigned,
+      @pSignedMessage) then
+    RaiseError(ERR_FILE_SIGN_FAILED);
 
-    // Save the signed message
-{    WriteFileContent(SignatureFileName, pSignedMessage^.pbData);
-    Writeln('Signature was saved successfully');
-  }
+   // Save the signed message
+   WriteFileContent(
+    SignatureFileName,
+    pSignedMessage^.pbData,
+    pSignedMessage^.cbData);
+
   finally
-    if pChainContext <> nil then
-      CertFreeCertificateChain(pChainContext);
+    //if pChainContext <> nil then
+    //  CertFreeCertificateChain(pChainContext);
     if pSignedMessage <> nil then
       CadesFreeBlob(pSignedMessage);
     if pCertContext <> nil then
@@ -476,6 +496,7 @@ begin
       CertCloseStore(hStore, CERT_CLOSE_STORE_FORCE_FLAG);
     Certs.Free;
   end;
+  Result := SignatureFileName;
 end;
 end.
 

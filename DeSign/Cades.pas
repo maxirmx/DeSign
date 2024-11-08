@@ -58,6 +58,9 @@ const
   CADES_ADDITIONAL_TSA_SEP = '::::';
 
 type
+  PPBYTE = ^PBYTE;
+  PDWORD = ^DWORD;
+
   PCADES_AUTH_PARA = ^CADES_AUTH_PARA;
   CADES_AUTH_PARA = record
     dwSize: DWORD;
@@ -356,7 +359,7 @@ function CadesFreeSignaturePropPages(prgPropPages: Pointer;
   external 'CADES.dll';
 
 function CadesSignMessage(pSignPara: PCADES_SIGN_MESSAGE_PARA; fDetachedSignature: BOOL;
-  cToBeSigned: DWORD; rgpbToBeSigned: PBYTE; rgcbToBeSigned: DWORD;
+  cToBeSigned: DWORD; rgpbToBeSigned: Pointer; rgcbToBeSigned: PDWORD;
   ppSignedBlob: PPCRYPT_DATA_BLOB): BOOL; stdcall; external 'CADES.dll';
 
 function CadesSignHash(pSignPara: PCADES_SIGN_MESSAGE_PARA; pbHash: PBYTE;
@@ -402,7 +405,7 @@ function CadesFreeBlobArray(pBlobArray: PCADES_BLOB_ARRAY): BOOL; stdcall;
   external 'CADES.dll';
 
 function CadesFormatMessage(dwFlags: DWORD; lpSource: Pointer; dwMessageId: DWORD;
-  dwLanguageId: DWORD; lpBuffer: LPTSTR; nSize: DWORD; Arguments: va_list): DWORD; stdcall;
+  dwLanguageId: DWORD; lpBuffer: PWideChar; nSize: DWORD; Arguments: va_list): DWORD; stdcall;
   external 'CADES.dll';
 
 

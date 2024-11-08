@@ -94,8 +94,8 @@ OutputDir=
 UnitOutputDir=
 PackageDLLOutputDir=
 PackageDCPOutputDir=
-SearchPath=R:\Projects\22.Projects\Jedi\jwa\branches\2.3\Win32API
-Packages=vclx;vcl;rtl;indy;dsnapcon;dsnap;dbrtl;vcldb;VclSmp;adortl;bdertl;vcldbx;ibxpress;teeui;teedb;tee;dss;visualclx;visualdbclx;vclactnband;vclshlctrls
+SearchPath=
+Packages=
 Conditionals=
 DebugSourceDirs=
 UsePackages=0
@@ -134,11 +134,3 @@ OriginalFilename=
 ProductName=
 ProductVersion=1.0.0.0
 Comments=
-[HistoryLists\hlUnitAliases]
-Count=1
-Item0=WinTypes=Windows;WinProcs=Windows;DbiTypes=BDE;DbiProcs=BDE;DbiErrs=BDE;
-[HistoryLists\hlSearchPath]
-Count=3
-Item0=R:\Projects\22.Projects\Jedi\jwa\branches\2.3\Win32API
-Item1=R:\Projects\22.Projects\Jedi\jwa\branches\2.3\Packages\d7\bin\release\static
-Item2=R:\Projects\22.Projects\Jedi\jwa\branches\2.3\Packages\d7\bin

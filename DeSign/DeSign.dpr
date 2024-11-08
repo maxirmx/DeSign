@@ -20,7 +20,7 @@ end;
 
 procedure PrintTableHeader;
 begin
-  WriteLn(Format('%-5s%-30s%s', ['№', 'Владелец (Friendly Name или Subject)', 'Thumbprint']));
+  WriteLn(Format('%-5s%-30s%s', ['№', 'Friendly Name/Subject)', 'Thumbprint']));
   WriteLn(StringOfChar('-', 5) + ' ' + StringOfChar('-', 30) + ' ' + StringOfChar('-', 40));
 end;
 
@@ -74,8 +74,8 @@ var
   Certificates: TList;
   i, SelectedIndex: Integer;
   SelectedCert: TCertOption;
-  pCertContext: PCCERT_CONTEXT;
   fileName: string;
+  sigFileName: string;
 begin
   try
     Certificates := GetCertificates('1.2.643'); // Стандарт.ИСО.Россия = ГОСТ
@@ -91,7 +91,8 @@ begin
       SelectedIndex := PromptUserToSelectCertificate(Certificates);
       SelectedCert := TCertOption(Certificates[SelectedIndex - 1]^);
       fileName := PromptUserToEnterFileName;
-      SignFile(fileName, SelectedCert.Thumbprint)
+      sigFileName := SignFile(fileName, SelectedCert.Thumbprint);
+      Writeln('Подпись сохранена в файл ', sigFileName);
     end
     else
       WriteLn('Не найдено ни одного сертификата с поддержкой шифрования по ГОСТ')
