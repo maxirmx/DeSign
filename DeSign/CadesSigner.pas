@@ -1,4 +1,4 @@
-unit CertHelper;
+unit CadesSigner;
 
 interface
 
@@ -29,11 +29,19 @@ type
   // Модуль использует исключения только данного типа
   // Текст исключения имеет следующий формат -
   // <Сообщение модуля> [<Код ошибки (GetLastError)>] <Информация об ошибке(FormaMessage)>
-  ECertificateException = class(Exception);
+  // Модуль CryptoPro не возвращает текстового сообщения об ошибке,
+  // для ошибок CryptoPro будет только код
+  
+  ECertificateException = class(Exception)
+  private
+    FErrorCode: DWORD;
+  public
+    constructor Create(const Message: string); reintroduce;
+    property ErrorCode: DWORD read FErrorCode;
+  end;
 
 function GetCertificates(const Prefix: string): TList;
 function SignFile(const FilePath: string; const Thumbprint: T20Bytes): string;
-
 
 implementation
 
@@ -53,6 +61,19 @@ const
   ERR_FILE_EXISTS = 'Файл подписи с таким именем уже существует: ';
   ERR_FILE_SIGN_FAILED  = 'Не удалось подписать файл';
 
+constructor ECertificateException.Create(const Message: string);
+var
+  Msg: string;
+begin
+  FErrorCode := GetLastError;
+  if FErrorCode <> 0 then
+    Msg := Format('%s [0x%s] %s', [Message, IntToHex(FErrorCode, 8), SysErrorMessage(FErrorCode)])
+  else
+    Msg := Message; // Use the original message if there's no error code.
+
+  inherited Create(Msg);
+end;
+
 //  RaiseError
 //  private
 //  Сформировать сообщение об ошибке, поднять исключение
@@ -61,15 +82,8 @@ const
 //     Сообщение модуля (одна из констант выше)
 //  noreturn
 procedure RaiseError(const Message: string);
-var
-  ErrorCode: DWORD;
-  FullMessage: string;
 begin
-  ErrorCode := GetLastError;
-  FullMessage := Format(
-        '%s [0x%s] %s',
-        [Message, IntToHex(ErrorCode, 8), SysErrorMessage(ErrorCode)]);
-  raise Exception.Create(FullMessage);
+  raise ECertificateException.Create(Message);
 end;
 
 { Certificate helpers }
@@ -216,13 +230,17 @@ end;
 //  Запись массива байт в файла
 //  Параметры
 //      const string FileName - путь к файлу
-//      const TByte Data - что писать
+//      const PByte Data - что писать
+//      const integer Length - сколько исать
 //  Исключение ECertificateException
 //      Если файл с таким именем уже существует
 //      Если не удалось создать файл
 //      Если не удалось записать содержимое файла
 
-procedure WriteFileContent(const FileName: string; const Data: PByte; const L: integer);
+procedure WriteFileContent(
+  const FileName: string;
+  const Data: PByte;
+  const Length: integer);
 var
   FileStream: TFileStream;
 begin
@@ -240,7 +258,7 @@ begin
   end;
 
   try
-    if FileStream.Write(Data, L) <> L then
+    if FileStream.Write(Data, Length) <> Length then
       RaiseError(ERR_FAILED_TO_WRITE + ' "' + FileName + '"');
   finally
     FileStream.Free;
@@ -337,17 +355,39 @@ begin
   Result := Res;
 end;
 
+{ File Signing }
 
-function SignFile(const FilePath: string; const Thumbprint: T20Bytes): string;
+//  SignFile
+//  interface
+//  Формирует подпись для содержимого файла, сохраняет подпись в новый файл
+//  Алгоритм формирования имени файла с подписью
+//    Меняем расширение к файлу, который подписываем, на 'sig'
+//    Если расширения нет, добавляем 'sig'
+//    Если такой файл уже существует, добавляем к расширению суффиксы '1', '2', ...
+//    пока не получится уникальный путь
+//  Параметры
+//      const string FileName - путь к файлу
+//      const sring thumbprint - идентифкатор, по которому ищем сертификат
+//  Результат
+//      string путь к файлу с подписью
+//  Исключение ECertificateException
+//      Если не удалось отрыть файл
+//      Если не удалось прочитать содержимое файла
+//      Если не удалось отрыть хранилище сертификатов
+//      Если не удалось создать файл
+//      Если не удалось записать содержимое файла
+//      Если были проблемы с подписанием, например, не подошёл пароль
+
+function SignFile(const FilePath: string; const thumbprint: T20Bytes): string;
 var
   hStore: HCERTSTORE;
   pCertContext: PCCERT_CONTEXT;
   pSignedMessage: PCRYPT_DATA_BLOB;
   pChainContext: PCERT_CHAIN_CONTEXT;
   Certs: TList;
-  SignPara: CRYPT_SIGN_MESSAGE_PARA;     // Msg
-  CadesSignPara: CADES_SIGN_PARA;        // MsgAdd
-  Para: CADES_SIGN_MESSAGE_PARA;         // MsgEx
+  SignPara: CRYPT_SIGN_MESSAGE_PARA;
+  CadesSignPara: CADES_SIGN_PARA;
+  Para: CADES_SIGN_MESSAGE_PARA;
   FileContent: TBytes;
   ChainPara: CERT_CHAIN_PARA;
   i: Integer;
@@ -355,12 +395,8 @@ var
   pbToBeSigned: PByte;
   cbToBeSigned: DWORD;
 
-
   pChainElement: PCERT_CHAIN_ELEMENT;
   ppChainElement: ^PCERT_CHAIN_ELEMENT;
-  pChainCertContext: PCCERT_CONTEXT;
-
-  //pSignCertContext: PCERT_CONTEXT;
   ppSignCertContext: ^PCERT_CONTEXT;
 begin
   hStore := nil;
@@ -422,50 +458,21 @@ begin
     begin
       if pChainContext.rgpChain^.cElement > 1 then
       begin
-        writeln('Elements in the chain: ', pChainContext.rgpChain^.cElement);
-
         SignPara.cMsgCert := pChainContext.rgpChain^.cElement -1;
         GetMem(SignPara.rgpMsgCert, SignPara.cMsgCert * SizeOf(PCERT_CONTEXT));
 
-        writeln('  ==> Chain certificates in SignPara: ', SignPara.cMsgCert);
-        //SignPara.cMsgCert := 0;
         ppChainElement := pChainContext.rgpChain^.rgpElement;
         ppSignCertContext := SignPara.rgpMsgCert;
 
         for i := 0 to SignPara.cMsgCert - 1 do
         begin
           pChainElement := ppChainElement^;
-          //pSignCertContext := ppSignCertContext^;
-          writeln('CERT_CHAIN_ELEMENT ', i, ' cbSize=', pChainElement^.cbSize);
-          pChainCertContext := pChainElement^.pCertContext;
-          writeln('     CHAIN_CERT_CONTEXT hCertStore=', Format('%p', [pChainCertContext^.hCertStore]));
           ppSignCertContext^ := pChainElement^.pCertContext;
           Inc(ppChainElement);
           Inc(ppSignCertContext);
         end;
-        //SignPara.cMsgCert := 0;
       end;
     end;
-
-    // Add certificates (without root) to message
-{    if Certs.Count > 0 then
-    begin
-      SignPara.cMsgCert := Certs.Count;
-      GetMem(SignPara.rgpMsgCert, Certs.Count * SizeOf(CERT_CONTEXT));
-      //SignPara.rgpMsgCert := @Certs.Items;
-      for i := 0 to Certs.Count - 1 do
-      begin
-    // Get a pointer to the CERT_CONTEXT
-    item := PCERT_CONTEXT(Certs.Items[i])^;
-
-    // Move each CERT_CONTEXT to the allocated memory using Inc
-    Move(item, SignPara.rgpMsgCert^, SizeOf(CERT_CONTEXT));
-
-    // Increment the pointer to the next CERT_CONTEXT in the allocated memory
-    Inc(SignPara.rgpMsgCert);
-    end;
-    end;
- }
 
     // Create signed message
     if not CadesSignMessage(
@@ -484,6 +491,8 @@ begin
     pSignedMessage^.cbData);
 
   finally
+    if Assigned(SignPara.rgpMsgCert) then
+      FreeMem(SignPara.rgpMsgCert);
     if pChainContext <> nil then
       CertFreeCertificateChain(pChainContext);
     if pSignedMessage <> nil then

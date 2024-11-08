@@ -6,9 +6,9 @@ uses
   Windows,
   SysUtils,
   Classes,
-  CertHelper,
-  JwaWinCrypt,
-  AdesConstants;
+  CadesSigner,
+  JwaWinCrypt;
+  //AdesConstants;
 
 procedure PrintHex(const Data: array of Byte);
 var
