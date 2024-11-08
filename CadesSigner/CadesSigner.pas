@@ -11,7 +11,6 @@ uses
   Cades;
 
 type
-   TBytes = array of Byte;
    T20Bytes = array[0..19] of Byte;  // SHA-1 hash is 20 bytes
 
   // Описание сертификата для использовании в меню выбора с последующим запоминанием
@@ -47,6 +46,9 @@ function SignFile(
   const password: string) : string ;
 
 implementation
+
+type
+   TBytes = array of Byte;
 
 { Error Handling }
 
