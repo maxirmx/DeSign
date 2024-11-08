@@ -11,7 +11,6 @@ uses
   Cades;
 
 type
-   TBytes = array of Byte;
    T20Bytes = array[0..19] of Byte;  // SHA-1 hash is 20 bytes
 
   // Описание сертификата для использовании в меню выбора с последующим запоминанием
@@ -32,7 +31,7 @@ type
   // Модуль CryptoPro не возвращает текстового сообщения об ошибке,
   // для ошибок CryptoPro будет только код
   
-  ECertificateException = class(Exception)
+  ECadesSignerException = class(Exception)
   private
     FErrorCode: DWORD;
   public
@@ -47,6 +46,9 @@ function SignFile(
   const password: string) : string ;
 
 implementation
+
+type
+   TBytes = array of Byte;
 
 { Error Handling }
 
@@ -67,7 +69,7 @@ const
   ERR_ACQ_CONETXT_FAILED = 'Не удалось получить контекст криптопровайдера';
   ERR_SET_PIN_FAILED = 'Не удалось применить пароль ЭЦП ("ПИН")';
 
-constructor ECertificateException.Create(const Message: string);
+constructor ECadesSignerException.Create(const Message: string);
 var
   Msg: string;
 begin
@@ -91,11 +93,10 @@ end;
 //  noreturn
 procedure RaiseError(const Message: string);
 begin
-  raise ECertificateException.Create(Message);
+  raise ECadesSignerException.Create(Message);
 end;
 
 { Certificate helpers }
-
 
 //  GetCertificateByThumbprint
 //  private
@@ -107,7 +108,7 @@ end;
 //      сертификат
 //      ВАЖНО !!! Сертификат существует в контексте хранилища
 //      Если хранилище закрыть, ресурсы сертификата будут освобождены
-//  Исключение ECertificateException
+//  Исключение ECadesSignerException
 //      Если не удалось найти сертификат
 
 function GetCertificateByThumbprint(
@@ -165,7 +166,7 @@ end;
 //  Параметры
 //      const PCCERT_CONTEXT - сертификат
 //      const password - пароль
-//  Исключение ECertificateException
+//  Исключение ECadesSignerException
 //      Если не удалось получить доступ к свойствам провайдера
 //      Если не удалось применит пароль
 
@@ -234,7 +235,7 @@ end;
 //      const string FileName - путь к файлу, который подписываем
 //  Результат
 //      string путь к файлу с подписью
-//  Исключение ECertificateException
+//  Исключение ECadesSignerException
 //      Если не удалось создать уникальное расширение для файла подписи (а вдруг ...)
 
 function GetUniqueSignatureFileName(const FileName: string): string;
@@ -272,7 +273,7 @@ end;
 //      const string FileName - путь к файлу
 //  Результат
 //      TBytes - содержимое файла
-//  Исключение ECertificateException
+//  Исключение ECadesSignerException
 //      Если не удалось отрыть файл
 //      Если не удалось прочитать содержимое файла
 function ReadFileContent(const FilePath: string): TBytes;
@@ -301,7 +302,7 @@ end;
 //      const string FileName - путь к файлу
 //      const PByte Data - что писать
 //      const integer Length - сколько исать
-//  Исключение ECertificateException
+//  Исключение ECadesSignerException
 //      Если файл с таким именем уже существует
 //      Если не удалось создать файл
 //      Если не удалось записать содержимое файла
@@ -352,7 +353,7 @@ end;
 //  Результат
 //      TList<TCertOption> - список описаний сертификатов
 //      Элементы списка создаются динамически, нужно освобождать память
-//  Исключение ECertificateException
+//  Исключение ECadesSignerException
 //      Если не удалось отрыть хранилище сертификатов
 //      Если не удалось закрыть хранилище сертификатов
 //      Если не прочитать аттрибуты сертификата
@@ -440,7 +441,7 @@ end;
 //      const password - пароль; если это поле путое, применяться не будет
 //  Результат
 //      string путь к файлу с подписью
-//  Исключение ECertificateException
+//  Исключение ECadesSignerException
 //      Если не удалось отрыть файл
 //      Если не удалось прочитать содержимое файла
 //      Если не удалось отрыть хранилище сертификатов
@@ -478,6 +479,11 @@ begin
   pChainContext := nil;
   Certs := TList.Create;
   try
+    FillChar(SignPara, SizeOf(SignPara), 0);
+    FillChar(CadesSignPara, SizeOf(CadesSignPara), 0);
+    FillChar(Para, SizeOf(Para), 0);
+    FillChar(ChainPara, SizeOf(ChainPara), 0);
+
     hStore := CertOpenSystemStore(0, 'MY');
     if hStore = nil then
       RaiseError(ERR_OPEN_STORE_FAILED);
@@ -495,7 +501,6 @@ begin
 
     // Initialize sign parameters
     // Standard wincert
-    FillChar(SignPara, SizeOf(SignPara), 0);
     SignPara.cbSize := SizeOf(CRYPT_SIGN_MESSAGE_PARA);
     SignPara.dwMsgEncodingType := X509_ASN_ENCODING or PKCS_7_ASN_ENCODING;
     SignPara.pSigningCert := nil;
@@ -503,21 +508,16 @@ begin
     SignPara.HashAlgorithm.pszObjId := PAnsiChar(GetHashOid(pCertContext));
 
     // Cades
-    FillChar(CadesSignPara, SizeOf(CadesSignPara), 0);
     CadesSignPara.dwSize := SizeOf(CadesSignPara);
     CadesSignPara.dwCadesType := CADES_BES;
 
     // Wrapper
-    FillChar(Para, SizeOf(Para), 0);
     Para.dwSize := SizeOf(CADES_SIGN_MESSAGE_PARA);
     Para.pSignMessagePara := @SignPara;
     Para.pCadesSignPara := @CadesSignPara;
 
-
     // Get certificate chain
-    FillChar(ChainPara, SizeOf(ChainPara), 0);
     ChainPara.cbSize := SizeOf(ChainPara);
-
 
     if CertGetCertificateChain(
       0,

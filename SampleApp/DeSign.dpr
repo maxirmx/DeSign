@@ -99,6 +99,7 @@ begin
     on E: Exception do
       WriteLn('Ошибка: ', E.Message)
   end;
+  Certificates.Free;
   WriteLn('Нажмите <ENTER> для завершения...');
   Readln;
 end.
