@@ -69,7 +69,6 @@ begin
   Result := FileName;
 end;
 
-
 var
   Certificates: TList;
   i, SelectedIndex: Integer;
@@ -91,7 +90,7 @@ begin
       SelectedIndex := PromptUserToSelectCertificate(Certificates);
       SelectedCert := TCertOption(Certificates[SelectedIndex - 1]^);
       fileName := PromptUserToEnterFileName;
-      sigFileName := SignFile(fileName, SelectedCert.Thumbprint, 'M22$panIe!');
+      sigFileName := SignFile(fileName, SelectedCert.Thumbprint, '');
       Writeln('Подпись сохранена в файл ', sigFileName);
     end
     else
