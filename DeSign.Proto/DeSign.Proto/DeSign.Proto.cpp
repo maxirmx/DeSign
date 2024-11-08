@@ -13,7 +13,10 @@
 #include <iostream>
 #include <limits>
 
+#include "cades.h"
+
 #pragma comment(lib, "Crypt32.lib")
+#pragma comment(lib, "Cades.lib")
 
 struct CertOption 
 {
@@ -24,12 +27,12 @@ struct CertOption
 static void ThrowError(const std::string& message) {
     DWORD errorCode = GetLastError();
     LPVOID errorMsg = nullptr;
-    FormatMessage(
+    FormatMessageA(
         FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
         NULL,
         errorCode,
         MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-        (LPTSTR)&errorMsg,
+        (LPSTR)&errorMsg,
         0,
         NULL
     );
@@ -89,50 +92,204 @@ static std::vector<CertOption> GetCertificates(const std::string& prefix) {
     return res;
 }
 
-void SignFile(const std::string& filePath, const std::string& thumbprint);
+static const char* GetHashOid(PCCERT_CONTEXT pCert) {
+    const char* pKeyAlg = pCert->pCertInfo->SubjectPublicKeyInfo.Algorithm.pszObjId;
+    if (strcmp(pKeyAlg, szOID_CP_GOST_R3410EL) == 0)
+    {
+        return szOID_CP_GOST_R3411;
+    }
+    else if (strcmp(pKeyAlg, szOID_CP_GOST_R3410_12_256) == 0)
+    {
+        return szOID_CP_GOST_R3411_12_256;
+    }
+    else if (strcmp(pKeyAlg, szOID_CP_GOST_R3410_12_512) == 0)
+    {
+        return szOID_CP_GOST_R3411_12_512;
+    }
+    return NULL;
+}
 
-std::vector<BYTE> ReadFileContent(const std::string& filePath) {
+
+static std::string GetUniqueSignatureFileName(const std::string& fileName) {
+    size_t lastDot = fileName.find_last_of(".");
+    std::string baseName = (lastDot == std::string::npos) ? fileName : fileName.substr(0, lastDot);
+    std::string extension = ".sig";
+    std::string newFileName = baseName + extension;
+    int counter = 1;
+
+    // Check if file exists
+    auto fileExists = [](const std::string& name) {
+        std::ifstream f(name.c_str());
+        return f.good();
+        };
+
+    while (fileExists(newFileName)) {
+        newFileName = baseName + extension + std::to_string(counter);
+        ++counter;
+    }
+
+    return newFileName;
+}
+
+static std::vector<BYTE> ReadFileContent(const std::string& filePath) {
     std::ifstream file(filePath, std::ios::binary | std::ios::ate);
     if (!file) {
-        throw std::runtime_error("Failed to open file.");
+        ThrowError("Failed to open file '" + filePath + "'");
     }
     std::streamsize size = file.tellg();
     file.seekg(0, std::ios::beg);
     std::vector<BYTE> buffer(size);
     if (!file.read(reinterpret_cast<char*>(buffer.data()), size)) {
-        throw std::runtime_error("Failed to read file.");
+        ThrowError("Failed to read file '" + filePath + "'");
     }
     return buffer;
 }
 
-PCCERT_CONTEXT GetCertificateByThumbprint(const std::string& thumbprint) {
-    HCERTSTORE hStore = CertOpenStore(CERT_STORE_PROV_SYSTEM, 0, NULL, CERT_SYSTEM_STORE_CURRENT_USER, L"MY");
-    if (!hStore) {
-        throw std::runtime_error("Failed to open certificate store.");
+static void SaveVectorToFile(const std::string& fileName, const std::vector<BYTE>& data) {
+    // Check if file already exists
+    std::ifstream infile(fileName);
+    if (infile.good()) {
+        ThrowError("File already exists: " + fileName);
     }
 
-    BYTE thumbprintBytes[20];
-    DWORD thumbprintSize = sizeof(thumbprintBytes);
-    if (!CryptStringToBinaryA(thumbprint.c_str(), thumbprint.length(), CRYPT_STRING_HEX, thumbprintBytes, &thumbprintSize, NULL, NULL)) {
-        CertCloseStore(hStore, 0);
-        throw std::runtime_error("Failed to convert thumbprint to binary.");
+    // Write data to file
+    std::ofstream outfile(fileName, std::ios::binary);
+    if (!outfile) {
+        ThrowError("Failed to open file for writing: " + fileName);
     }
+
+    outfile.write(reinterpret_cast<const char*>(data.data()), data.size());
+    if (!outfile) {
+        ThrowError("Failed to write data to file: " + fileName);
+    }
+}
+
+static PCCERT_CONTEXT GetCertificateByThumbprint(HCERTSTORE hStore, const std::vector<BYTE>& thumbprint) {
+    PCCERT_CONTEXT pCertContext = nullptr;
 
     CRYPT_HASH_BLOB hashBlob;
-    hashBlob.cbData = thumbprintSize;
-    hashBlob.pbData = thumbprintBytes;
+    hashBlob.cbData = thumbprint.size();
+    hashBlob.pbData = const_cast<BYTE*>(thumbprint.data());
 
-    PCCERT_CONTEXT pCertContext = CertFindCertificateInStore(hStore, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, 0, CERT_FIND_HASH, &hashBlob, NULL);
-    CertCloseStore(hStore, 0);
-
-    if (!pCertContext) {
-        throw std::runtime_error("Certificate not found.");
-    } 
-
+    pCertContext = CertFindCertificateInStore(hStore, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, 0, CERT_FIND_HASH, &hashBlob, NULL);
+	if (!pCertContext) {
+		ThrowError("Failed to find certificate by thumbprint.");
+	}
     return pCertContext;
 }
 
-void SignFile(const std::string& filePath, const std::string& thumbprint) {
+static void SignFile(const std::string& filePath, const std::vector<BYTE>& thumbprint) {
+    HCERTSTORE hStore = nullptr;
+	PCCERT_CONTEXT pCertContext = nullptr;
+    PCRYPT_DATA_BLOB pSignedMessage = nullptr;
+    PCCERT_CHAIN_CONTEXT pChainContext = nullptr;
+
+    try {
+        hStore = CertOpenStore(CERT_STORE_PROV_SYSTEM, 0, NULL, CERT_SYSTEM_STORE_CURRENT_USER, L"MY");
+        if (!hStore) {
+            ThrowError("Failed to open certificate store.");
+        }
+
+        pCertContext = GetCertificateByThumbprint(hStore, thumbprint);
+        std::string signatureFileName = GetUniqueSignatureFileName(filePath);
+        std::vector<BYTE> fileContent = ReadFileContent(filePath);
+
+        // Задаем параметры 
+        CRYPT_SIGN_MESSAGE_PARA signPara = { sizeof(signPara) };
+        signPara.dwMsgEncodingType = X509_ASN_ENCODING | PKCS_7_ASN_ENCODING;
+        signPara.pSigningCert = pCertContext;
+        signPara.HashAlgorithm.pszObjId = (LPSTR)GetHashOid(pCertContext);
+
+        CADES_SIGN_PARA cadesSignPara = { sizeof(cadesSignPara) };
+        cadesSignPara.dwCadesType = CADES_BES;
+
+        CADES_SIGN_MESSAGE_PARA para = { sizeof(para) };
+        para.pSignMessagePara = &signPara;
+        para.pCadesSignPara = &cadesSignPara;
+
+        // Формируем данные для подписания
+        const unsigned char* pbToBeSigned[] = { &fileContent[0] };
+        DWORD cbToBeSigned[] = { (DWORD)fileContent.size() };
+
+        CERT_CHAIN_PARA		ChainPara = { sizeof(ChainPara) };
+
+        std::vector<PCCERT_CONTEXT> certs;
+
+        if (CertGetCertificateChain(
+            NULL,
+            pCertContext,
+            NULL,
+            NULL,
+            &ChainPara,
+            0,
+            NULL,
+            &pChainContext)) {
+
+            for (DWORD i = 0; i < pChainContext->rgpChain[0]->cElement - 1; ++i)
+            {
+                certs.push_back(pChainContext->rgpChain[0]->rgpElement[i]->pCertContext);
+            }
+        }
+        // Добавляем в сообщение цепочку сертификатов без корневого
+        if (certs.size() > 0)
+        {
+            signPara.cMsgCert = (DWORD)certs.size();
+            signPara.rgpMsgCert = &certs[0];
+        }
+
+
+        // Создаем подписанное сообщение
+        if (!CadesSignMessage(&para, 0, 1, pbToBeSigned, cbToBeSigned, &pSignedMessage)) {
+            std::cout << "CadesSignMessage() failed" << std::endl;
+        }
+
+        std::vector<unsigned char> message(pSignedMessage->cbData);
+        std::copy(pSignedMessage->pbData, pSignedMessage->pbData + pSignedMessage->cbData, message.begin());
+
+        SaveVectorToFile(signatureFileName, message);
+
+        std::cout << "Signature was saved successfully" << std::endl;
+
+
+        if (pChainContext != nullptr)
+        {
+            CertFreeCertificateChain(pChainContext);
+            pChainContext = nullptr;
+        }
+
+        if (pSignedMessage != nullptr) {
+            CadesFreeBlob(pSignedMessage);
+			pSignedMessage = nullptr;
+        }
+
+        if (pCertContext != nullptr)
+        {
+            CertFreeCertificateContext(pCertContext);
+			pCertContext = nullptr;
+        }
+
+        if (hStore != nullptr)
+        {
+            CertCloseStore(hStore, 0);
+            hStore = nullptr;
+        }
+    }
+	catch (const std::exception& e) {
+        if (pChainContext != nullptr)
+            CertFreeCertificateChain(pChainContext);
+		if (pSignedMessage)
+			CadesFreeBlob(pSignedMessage);
+        if (pCertContext)
+            CertFreeCertificateContext(pCertContext);
+        if (hStore)
+            CertCloseStore(hStore, 0);
+        throw e;
+	}
+}
+
+
+
+/*void SignFile(const std::string& filePath, const std::string& thumbprint) {
     PCCERT_CONTEXT pCertContext = GetCertificateByThumbprint(thumbprint);
     if (!pCertContext) {
         throw std::runtime_error("Certificate not found.");
@@ -198,6 +355,7 @@ void SignFile(const std::string& filePath, const std::string& thumbprint) {
     }
     signatureFile.write(reinterpret_cast<const char*>(signature.data()), signature.size());
 }
+*/
 
 static std::ostream& PrintHex(std::ostream& s, const BYTE* data, DWORD size) {
     for (DWORD i = 0; i < size; ++i) {
@@ -222,20 +380,36 @@ static void PrintTableRow(size_t index, const CertOption& cert) {
     PrintHex(std::cout, cert.thumbprint.data(), cert.thumbprint.size()) << std::endl;
 }
 
-int PromptUserToSelectCertificate(const std::vector<CertOption>& certificates) {
+static int PromptUserToSelectCertificate(const std::vector<CertOption>& certificates) {
     size_t choice = 0;
     while (true) {
-        std::cout << "Введите номер сертификата для выбора: ";
-        std::cin >> choice;
+        std::cout << "Введите номер сертификата для выбора и нажмите <ENTER> ";
 
-        if (std::cin.fail() || choice < 1 || choice > certificates.size()) {
-            std::cin.clear(); // clear the error flag
+        std::string input;
+        std::getline(std::cin, input);
+        try {
+            choice = std::stoul(input);
+        } catch (const std::invalid_argument&) {
             std::cout << "Неверный ввод. Пожалуйста, введите номер от 1 до " << certificates.size() << "." << std::endl;
+            continue;
+        } catch (const std::out_of_range&) {
+            std::cout << "Неверный ввод. Пожалуйста, введите номер от 1 до " << certificates.size() << "." << std::endl;
+            continue;
         }
-        else {
+
+        if (choice < 1 || choice > certificates.size()) {
+            std::cout << "Неверный ввод. Пожалуйста, введите номер от 1 до " << certificates.size() << "." << std::endl;
+        } else {
             return choice; // valid input
         }
     }
+}
+
+static std::string PromptUserToEnterFileName() {
+    std::string fileName;
+    std::cout << "Введите имя файла, который необходимо подписать и нажмите <ENTER> ";
+    std::getline(std::cin, fileName);
+    return fileName;
 }
 
 int main()
@@ -254,9 +428,11 @@ int main()
 
             // Prompt user to select an item by its number
             int selectedNumber = PromptUserToSelectCertificate(res);
-            const CertOption& selectedCert = res[selectedNumber - 1];
+            const CertOption& selectedCert = res[static_cast<std::vector<CertOption, std::allocator<CertOption>>::size_type>(selectedNumber) - 1];
             std::cout << "Вы выбрали сертификат: " << selectedCert.friendlyName << std::endl;
-            // Further processing with selectedCert
+            
+			std::string fileName = PromptUserToEnterFileName();
+			SignFile(fileName, selectedCert.thumbprint);
         }
         else
         {
@@ -265,14 +441,17 @@ int main()
     }
     catch (const std::exception& e)
     {
-        std::cerr << e.what() << std::endl;
-        return 1;
+        std::cerr << "Ошибка: " << e.what() << std::endl;
     }
+
+    std::cout << "Press ENTER to exit...";
+    std::string input;
+    std::getline(std::cin, input); 
     return 0;
 }
 
 
-int xxmain() {
+/*int xxmain() {
     try {
         std::string filePath = "path_to_your_file";
         std::string thumbprint = "your_certificate_thumbprint";
@@ -285,3 +464,4 @@ int xxmain() {
     }
     return 0;
 }
+*/
