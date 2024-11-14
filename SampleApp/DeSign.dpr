@@ -8,27 +8,31 @@ uses
   Classes,
   CadesSigner,
   JwaWinCrypt;
-  //AdesConstants;
-
-procedure PrintHex(const Data: array of Byte);
-var
-  i: Integer;
-begin
-  for i := Low(Data) to High(Data) do
-    Write(Format('%.2x', [Data[i]]));
-end;
 
 procedure PrintTableHeader;
 begin
   WriteLn(Format('%-5s%-30s%s', ['№', 'Friendly Name/Subject)', 'Thumbprint']));
-  WriteLn(StringOfChar('-', 5) + ' ' + StringOfChar('-', 30) + ' ' + StringOfChar('-', 40));
+  WriteLn(
+    StringOfChar('-', 5) + ' ' +
+    StringOfChar('-', 30) + ' ' +
+    StringOfChar('-', 40));
 end;
 
 procedure PrintTableRow(Index: Integer; const Cert: TCertOption);
 begin
-  Write(Format('%-5d%-30s', [Index + 1, Cert.FriendlyName]));
-  PrintHex(Cert.Thumbprint);
-  WriteLn;
+  // Print the main row with the index, friendly name, and identifier
+  WriteLn(Format('%-5d%-30s%-30s', [
+    Index + 1,
+    Cert.FriendlyName,
+    Cert.Identifier
+  ]));
+
+  // Print StartDateTime and EndDateTime on the next line, aligned with FriendlyName
+  WriteLn(Format('%-5s%-20s%-20s', [
+    '',  // Blank space for alignment
+    'Действует с: ' + DateTimeToStr(Cert.StartDateTime),
+    ' по: ' + DateTimeToStr(Cert.EndDateTime)
+  ]));
 end;
 
 function PromptUserToSelectCertificate(const Certificates: TList): Integer;
@@ -77,6 +81,9 @@ var
   sigFileName: string;
 begin
   try
+    SetConsoleOutputCP(1251);
+    SetConsoleCP(1251);
+
     Certificates := GetCertificates('1.2.643'); // Стандарт.ИСО.Россия = ГОСТ
 
     if Certificates.Count > 0 then
@@ -90,7 +97,8 @@ begin
       SelectedIndex := PromptUserToSelectCertificate(Certificates);
       SelectedCert := TCertOption(Certificates[SelectedIndex - 1]^);
       fileName := PromptUserToEnterFileName;
-      sigFileName := SignFile(fileName, SelectedCert.Thumbprint, '');
+      sigFileName := GetUniqueSignatureFileName(fileName);
+      SignFileStr(fileName, sigFileName, SelectedCert.Identifier, '');
       Writeln('Подпись сохранена в файл ', sigFileName);
     end
     else

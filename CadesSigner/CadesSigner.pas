@@ -18,9 +18,13 @@ type
   //                 Может быть разным на разных компьютерах, может меняться пользователем
   // Thumbprint - уникальный идентификатор ("отпечаток") сертификата
   //              всегда одинаковый, в том числе на разных компьютерах
+  // Identifier - читаемое представление thumbprint в виде шестнадцатиричной строки
+  // StartTime, EndTime - время действия сертификата
   TCertOption = record
     FriendlyName: string;
     Thumbprint: T20Bytes;
+    Identifier: string;
+    StartDateTime, EndDateTime: TDateTime;
   end;
 
   PCertOption = ^TCertOption;
@@ -40,10 +44,21 @@ type
   end;
 
 function GetCertificates(const Prefix: string): TList;
-function SignFile(
+
+function GetUniqueSignatureFileName(const FileName: string): string;
+
+
+procedure SignFile(
   const FilePath: string;
+  const SigPath: string;
   const thumbprint: T20Bytes;
-  const password: string) : string ;
+  const password: string);
+
+procedure SignFileStr(
+  const FilePath: string;
+  const SigPath: string;
+  const Identifier: string;
+  const password: string);
 
 implementation
 
@@ -62,12 +77,12 @@ const
   ERR_FAILED_TO_READ = 'Не удалось прочитать файл';
   ERR_FAILED_TO_WRITE = 'Не удалось записать файл';
   ERR_FAILED_TO_UNIQ = 'Не удалось создать уникальное имя для файла подписи';
-  // Не должно случиться, разве что безумный race condition будет
-  ERR_FILE_EXISTS = 'Файл подписи с таким именем уже существует: ';
   ERR_FILE_SIGN_FAILED  = 'Не удалось подписать файл';
   ERR_GET_PROP_FAILED = 'Не удалось получить свойства криптопровайдера';
   ERR_ACQ_CONETXT_FAILED = 'Не удалось получить контекст криптопровайдера';
   ERR_SET_PIN_FAILED = 'Не удалось применить пароль ЭЦП ("ПИН")';
+  ERR_NOT_20_BYTES = 'Размер уникального идентификатора ЭЦП не равен 20 байтам';
+  ERR_FAILED_TO_CONVERT_TILE = 'Failed to convert FILETIME to TDateTime';
 
 constructor ECadesSignerException.Create(const Message: string);
 var
@@ -96,7 +111,65 @@ begin
   raise ECadesSignerException.Create(Message);
 end;
 
+{ T20Bytes helpers }
+
+//  T20BytesToHexString
+//  private
+//  Преобразование thumbprint в строку
+//  Параметры
+//      const Value - thumbprint в виде T20Bytes
+//  Результат
+//      строка шестнадцатитериичное читаемое представление
+function T20BytesToHexString(const Value: T20Bytes): string;
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := Low(Value) to High(Value) do
+    Result := Result + IntToHex(Value[I], 2);
+end;
+
+//  HexStringToT20Bytes
+//  private
+//  Преобразование строки в thumbprint
+//  Параметры
+//      const Hex - шестнадцатитериичное читаемое представление thumbprint
+//  Результат
+//      thumbprint в виде T20Bytes
+//  Исключение ECadesSignerException
+//      Если во входном пераметре не ровно 40 символов
+function HexStringToT20Bytes(const Hex: string): T20Bytes;
+var
+  I: Integer;
+begin
+  if Length(Hex) <> 40 then  // 20 bytes * 2 hex digits per byte
+    RaiseError(ERR_NOT_20_BYTES);
+
+  for I := 0 to 19 do
+    Result[I] := StrToInt('$' + Copy(Hex, (I * 2) + 1, 2));
+end;
+
 { Certificate helpers }
+
+//  FileTimeToDateTime
+//  private
+//  Конвертирует время в формате TFileTime в TDateTime
+//  Параметры
+//      const TFileTime - что конвертируем
+//  Результат TDateTime
+//  Исключение ECadesSignerException
+//      Если конвертация не удалась
+
+function FileTimeToDateTime(const FileTime: TFileTime): TDateTime;
+var
+  SystemTime: TSystemTime;
+begin
+  if FileTimeToSystemTime(FileTime, SystemTime) then
+    Result := SystemTimeToDateTime(SystemTime)
+  else
+    raise Exception.Create(ERR_FAILED_TO_CONVERT_TILE);
+end;
+
 
 //  GetCertificateByThumbprint
 //  private
@@ -134,7 +207,6 @@ begin
   Result := pCertContext;
 end;
 
-
 //  GetHashOid
 //  private
 //  Получение OID алгоритма хеширования по сертификату
@@ -165,14 +237,14 @@ end;
 //  применение пароля
 //  Параметры
 //      const PCCERT_CONTEXT - сертификат
-//      const password - пароль
+//      const Password - пароль
 //  Исключение ECadesSignerException
 //      Если не удалось получить доступ к свойствам провайдера
 //      Если не удалось применит пароль
 
 procedure SetPassword(
   const pCert: PCCERT_CONTEXT;
-  const password: string);
+  const Password: string);
 var
   pProvKey: PCRYPT_KEY_PROV_INFO;
   dwProvKeyInfoSize: DWORD;
@@ -212,7 +284,7 @@ begin
     if not CryptSetProvParam(
       hProvider,
       dwKeyType,
-      PBYTE(password),
+      PBYTE(Password),
       0) then
       RaiseError(ERR_SET_PIN_FAILED);
   finally
@@ -276,6 +348,7 @@ end;
 //  Исключение ECadesSignerException
 //      Если не удалось отрыть файл
 //      Если не удалось прочитать содержимое файла
+
 function ReadFileContent(const FilePath: string): TBytes;
 var
   FileStream: TFileStream;
@@ -298,12 +371,12 @@ end;
 //  WriteFileContent
 //  private
 //  Запись массива байт в файла
+//  Если файл существует, он перезаписывается
 //  Параметры
 //      const string FileName - путь к файлу
 //      const PByte Data - что писать
 //      const integer Length - сколько исать
 //  Исключение ECadesSignerException
-//      Если файл с таким именем уже существует
 //      Если не удалось создать файл
 //      Если не удалось записать содержимое файла
 
@@ -314,15 +387,12 @@ procedure WriteFileContent(
 var
   FileStream: TFileStream;
 begin
-  if FileExists(FileName) then
-    RaiseError(ERR_FILE_EXISTS + ' "' + FileName + '"');
-
   try
     FileStream := TFileStream.Create(FileName, fmCreate or fmShareExclusive);
   except
     on E: Exception do
     begin
-      RaiseError(ERR_FAILED_TO_OPEN + ' "' + FileName + '"');
+      RaiseError(ERR_FAILED_TO_OPEN + ' "' + FileName + '": ' + E.Message);
       Exit;
     end;
   end;
@@ -409,6 +479,11 @@ begin
       New(CertOptionPtr);
       CertOptionPtr^.FriendlyName := string(FriendlyName);
       Move(Sha1Thumbprint[0], CertOptionPtr^.Thumbprint[0], Size);
+      CertOptionPtr^.Identifier := T20BytesToHexString(CertOptionPtr^.Thumbprint);
+      CertOptionPtr^.StartDateTime :=
+        FileTimeToDateTime(TFileTime(pCertContext^.pCertInfo^.NotBefore));
+      CertOptionPtr^.EndDateTime :=
+        FileTimeToDateTime(TFileTime(pCertContext^.pCertInfo^.NotAfter));
       Res.Add(CertOptionPtr);
     end;
   except
@@ -429,16 +504,13 @@ end;
 
 //  SignFile
 //  interface
-//  Формирует подпись для содержимого файла, сохраняет подпись в новый файл
-//  Алгоритм формирования имени файла с подписью
-//    Меняем расширение к файлу, который подписываем, на 'sig'
-//    Если расширения нет, добавляем 'sig'
-//    Если такой файл уже существует, добавляем к расширению суффиксы '1', '2', ...
-//    пока не получится уникальный путь
+//  Формирует подпись для содержимого файла, сохраняет подпись целевой файл
+//  Если целевой файл сушествует, он перезаписывается
 //  Параметры
 //      const string FileName - путь к файлу
-//      const sring thumbprint - идентифкатор, по которому ищем сертификат
-//      const password - пароль; если это поле путое, применяться не будет
+//      const string FileName - путь к файлу с подписью (целевому)
+//      const sring Thumbprint - thumbprint, по которому ищем сертификат
+//      const string Password - пароль; если это поле путое, применяться не будет
 //  Результат
 //      string путь к файлу с подписью
 //  Исключение ECadesSignerException
@@ -449,10 +521,11 @@ end;
 //      Если не удалось записать содержимое файла
 //      Если были проблемы с подписанием, например, не подошёл пароль
 
-function SignFile(
+procedure SignFile(
   const FilePath: string;
-  const thumbprint: T20Bytes;
-  const password: string) : string ;
+  const SigPath: string;
+  const Thumbprint: T20Bytes;
+  const Password: string);
 var
   hStore: HCERTSTORE;
   pCertContext: PCCERT_CONTEXT;
@@ -465,7 +538,6 @@ var
   FileContent: TBytes;
   ChainPara: CERT_CHAIN_PARA;
   i: Integer;
-  SignatureFileName: string;
   pbToBeSigned: PByte;
   cbToBeSigned: DWORD;
 
@@ -490,9 +562,6 @@ begin
 
     // Signer certificate
     pCertContext := GetCertificateByThumbprint(hStore, Thumbprint);
-
-    // Signature file name
-    SignatureFileName := GetUniqueSignatureFileName(FilePath);
 
     // The data to be signed
     FileContent := ReadFileContent(FilePath);
@@ -549,7 +618,7 @@ begin
 
 
     if password <> '' then
-      SetPassword(pCertContext, password);
+      SetPassword(pCertContext, Password);
 
     // Create signed message
     if not CadesSignMessage(
@@ -563,7 +632,7 @@ begin
 
    // Save the signed message
    WriteFileContent(
-    SignatureFileName,
+    SigPath,
     pSignedMessage^.pbData,
     pSignedMessage^.cbData);
 
@@ -580,7 +649,39 @@ begin
       CertCloseStore(hStore, CERT_CLOSE_STORE_FORCE_FLAG);
     Certs.Free;
   end;
-  Result := SignatureFileName;
 end;
+
+//  SignFileStr
+//  interface
+//  Формирует подпись для содержимого файла, сохраняет подпись целевой файл
+//  Если целевой файл сушествует, он перезаписывается
+//  Параметры
+//      const string FileName - путь к файлу
+//      const string FileName - путь к файлу с подписью (целевому)
+//      const string Identifier - идентифкатор, по которому ищем сертификат
+//                                (thumbprint в виде шестнадацатиричной строки)
+//      const string Password - пароль; если это поле путое, применяться не будет
+//  Результат
+//      string путь к файлу с подписью
+//  Исключение ECadesSignerException
+//      Если не удалось отрыть файл
+//      Если не удалось прочитать содержимое файла
+//      Если не удалось отрыть хранилище сертификатов
+//      Если не удалось создать файл
+//      Если не удалось записать содержимое файла
+//      Если были проблемы с подписанием, например, не подошёл пароль
+
+procedure SignFileStr(
+  const FilePath: string;
+  const SigPath: string;
+  const Identifier: string;
+  const Password: string);
+var
+  Thumbprint: T20Bytes;
+begin
+   Thumbprint := HexStringToT20Bytes(Identifier);
+   SignFile(FilePath, SigPath, Thumbprint, Password);
+end;
+
 end.
 
