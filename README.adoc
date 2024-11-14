@@ -62,18 +62,35 @@ function GetCertificates(const Prefix: string): TList;
 
 [source,delphi]
 ----
-function SignFile(const FilePath: string; const thumbprint: T20Bytes; const password: string): string;
+procedure SignFile(const FilePath: string; const SigPath: string; const Thumbprint: T20Bytes; const Password: string);
+----
+
+Создает ЭЦП для файла, используя указанный сертификат.
+
+* *Параметры*:
+  ** `FilePath`: Полный путь к файлу, который нужно подписать.
+  ** `SigPath`: Полный путь к файлу, куда нужно поместить ЭЦП.
+  ** `Thumbprint`: Отпечаток (thumbprint) сертификата в формате `T20Bytes`, который будет использоваться для подписи.
+  ** `Password`: Пароль для доступа к сертификату.
+
+==== `SignFileStr`
+
+[source,delphi]
+----
+procedure SignFileStr(const FilePath: string; const SigPath: string; const Identifier: string; const Password: string);
 ----
 
 Создает цифровую подпись для файла, используя указанный сертификат.
 
 * *Параметры*:
   ** `FilePath`: Полный путь к файлу, который нужно подписать.
-  ** `thumbprint`: Отпечаток (thumbprint) сертификата в формате `T20Bytes`, который будет использоваться для подписи.
-  ** `password`: Пароль для доступа к сертификату.
+  ** `SigPath`: Полный путь к файлу, куда нужно поместить ЭЦП.
+  ** `Identifier`: Читаемое представление отпечатка (thumbprint) сертификата в виде строки шестнадцатиричных символов.
+  ** `Password`: Пароль для доступа к сертификату.
 
 * *Результат*:
   ** Возвращает путь к файлу с цифровой подписью.
+
 
 === Примеры использования
 
