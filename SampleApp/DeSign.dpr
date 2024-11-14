@@ -80,6 +80,7 @@ var
   fileName: string;
   sigFileName: string;
 begin
+  Certificates := nil;
   try
     SetConsoleOutputCP(1251);
     SetConsoleCP(1251);
@@ -107,7 +108,8 @@ begin
     on E: Exception do
       WriteLn('Ошибка: ', E.Message)
   end;
-  Certificates.Free;
+  if Certificates <> nil then
+    Certificates.Free;
   WriteLn('Нажмите <ENTER> для завершения...');
   Readln;
 end.
