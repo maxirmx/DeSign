@@ -28,7 +28,7 @@
 * `TCertOption`: Запись, представляющая параметры сертификата.
     ** `FriendlyName` - "человеческое" имя сертификатв. Обычно ФИО, но не обязательно. Может быть разным на разных компьютерах, может меняться пользователем
     ** `Thumbprint` - уникальный идентификатор ("отпечаток") сертификата всегда одинаковый, в том числе на разных компьютерах.
-    ** `Identifier` - читаемое представление "отпечатка" в виде строки шестнадцатиричных символов
+    ** `ThumbprintStr` - читаемое представление "отпечатка" в виде строки шестнадцатиричных символов
     ** `StartDateTime` - дата/время начала действия сертификата 
     ** `EndDateTime` - дата/время окончания действия сертификата 
 
@@ -77,7 +77,7 @@ procedure SignFile(const FilePath: string; const SigPath: string; const Thumbpri
 
 [source,delphi]
 ----
-procedure SignFileStr(const FilePath: string; const SigPath: string; const Identifier: string; const Password: string);
+procedure SignFileStr(const FilePath: string; const SigPath: string; const ThumbprintStr: string; const Password: string);
 ----
 
 Создает цифровую подпись для файла, используя указанный сертификат.
@@ -85,7 +85,7 @@ procedure SignFileStr(const FilePath: string; const SigPath: string; const Ident
 * *Параметры*:
   ** `FilePath`: Полный путь к файлу, который нужно подписать.
   ** `SigPath`: Полный путь к файлу, куда нужно поместить ЭЦП.
-  ** `Identifier`: Читаемое представление отпечатка (thumbprint) сертификата в виде строки шестнадцатиричных символов.
+  ** `ThumbprintStr`: Читаемое представление отпечатка (thumbprint) сертификата в виде строки шестнадцатиричных символов.
   ** `Password`: Пароль для доступа к сертификату.
 
 === Примеры использования

@@ -20,11 +20,11 @@ end;
 
 procedure PrintTableRow(Index: Integer; const Cert: TCertOption);
 begin
-  // Print the main row with the index, friendly name, and identifier
+  // Print the main row with the index, friendly name, and ThumbprintStr
   WriteLn(Format('%-5d%-30s%-30s', [
     Index + 1,
     Cert.FriendlyName,
-    Cert.Identifier
+    Cert.ThumbprintStr
   ]));
 
   // Print StartDateTime and EndDateTime on the next line, aligned with FriendlyName
@@ -99,7 +99,7 @@ begin
       SelectedCert := TCertOption(Certificates[SelectedIndex - 1]^);
       fileName := PromptUserToEnterFileName;
       sigFileName := GetUniqueSignatureFileName(fileName);
-      SignFileStr(fileName, sigFileName, SelectedCert.Identifier, '');
+      SignFileStr(fileName, sigFileName, SelectedCert.ThumbprintStr, '');
       Writeln('Подпись сохранена в файл ', sigFileName);
     end
     else

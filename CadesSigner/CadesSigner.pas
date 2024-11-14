@@ -18,12 +18,12 @@ type
   //                 Может быть разным на разных компьютерах, может меняться пользователем
   // Thumbprint - уникальный идентификатор ("отпечаток") сертификата
   //              всегда одинаковый, в том числе на разных компьютерах
-  // Identifier - читаемое представление thumbprint в виде шестнадцатиричной строки
+  // ThumbprintStr - читаемое представление thumbprint в виде шестнадцатиричной строки
   // StartTime, EndTime - время действия сертификата
   TCertOption = record
     FriendlyName: string;
     Thumbprint: T20Bytes;
-    Identifier: string;
+    ThumbprintStr: string;
     StartDateTime, EndDateTime: TDateTime;
   end;
 
@@ -57,7 +57,7 @@ procedure SignFile(
 procedure SignFileStr(
   const FilePath: string;
   const SigPath: string;
-  const Identifier: string;
+  const ThumbprintStr: string;
   const password: string);
 
 implementation
@@ -479,7 +479,7 @@ begin
       New(CertOptionPtr);
       CertOptionPtr^.FriendlyName := string(FriendlyName);
       Move(Sha1Thumbprint[0], CertOptionPtr^.Thumbprint[0], Size);
-      CertOptionPtr^.Identifier := T20BytesToHexString(CertOptionPtr^.Thumbprint);
+      CertOptionPtr^.ThumbprintStr := T20BytesToHexString(CertOptionPtr^.Thumbprint);
       CertOptionPtr^.StartDateTime :=
         FileTimeToDateTime(TFileTime(pCertContext^.pCertInfo^.NotBefore));
       CertOptionPtr^.EndDateTime :=
@@ -658,7 +658,7 @@ end;
 //  Параметры
 //      const string FileName - путь к файлу
 //      const string FileName - путь к файлу с подписью (целевому)
-//      const string Identifier - идентифкатор, по которому ищем сертификат
+//      const string ThumbprintStr - идентифкатор, по которому ищем сертификат
 //                                (thumbprint в виде шестнадацатиричной строки)
 //      const string Password - пароль; если это поле путое, применяться не будет
 //  Результат
@@ -674,12 +674,12 @@ end;
 procedure SignFileStr(
   const FilePath: string;
   const SigPath: string;
-  const Identifier: string;
+  const ThumbprintStr: string;
   const Password: string);
 var
   Thumbprint: T20Bytes;
 begin
-   Thumbprint := HexStringToT20Bytes(Identifier);
+   Thumbprint := HexStringToT20Bytes(ThumbprintStr);
    SignFile(FilePath, SigPath, Thumbprint, Password);
 end;
 
