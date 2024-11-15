@@ -1,5 +1,7 @@
 unit CadesSigner;
 
+{$TypedAddress On}
+
 interface
 
 uses
@@ -682,6 +684,6 @@ begin
    Thumbprint := HexStringToT20Bytes(ThumbprintStr);
    SignFile(FilePath, SigPath, Thumbprint, Password);
 end;
-
+{$TypedAddress Off}
 end.
 
