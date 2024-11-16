@@ -400,7 +400,7 @@ begin
   end;
 
   try
-    if FileStream.Write(Data, Length) <> Length then
+    if FileStream.Write(Data^, Length) <> Length then
       RaiseError(ERR_FAILED_TO_WRITE + ' "' + FileName + '"');
   finally
     FileStream.Free;
@@ -684,6 +684,5 @@ begin
    Thumbprint := HexStringToT20Bytes(ThumbprintStr);
    SignFile(FilePath, SigPath, Thumbprint, Password);
 end;
-{$TypedAddress Off}
 end.
 
