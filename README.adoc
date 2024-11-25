@@ -98,7 +98,7 @@ procedure SignFileStr(const FilePath: string; const SigPath: string; const Thumb
 
 === Проверка подписи
 
-Сформированную подпись можно проверить с помощью link:https://dss.cryptopro.ru/verify/#/signaturehttps://dss.cryptopro.ru/verify/#/signature[тестовой службы проверки подписи и сертификатов «КриптоПро SVS»].  
+Сформированную подпись можно проверить с помощью link:https://dss.cryptopro.ru/verify/[тестовой службы проверки подписи и сертификатов «КриптоПро SVS»].  
 
 ---
 
