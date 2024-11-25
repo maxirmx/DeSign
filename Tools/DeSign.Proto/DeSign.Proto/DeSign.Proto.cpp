@@ -239,7 +239,7 @@ static void SignFile(const std::string& filePath, const std::vector<BYTE>& thumb
 
 
         // Создаем подписанное сообщение
-        if (!CadesSignMessage(&para, 0, 1, pbToBeSigned, cbToBeSigned, &pSignedMessage)) {
+        if (!CadesSignMessage(&para, 1, 1, pbToBeSigned, cbToBeSigned, &pSignedMessage)) {
             std::cout << "CadesSignMessage() failed" << std::endl;
         }
 

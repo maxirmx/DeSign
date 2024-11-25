@@ -407,6 +407,56 @@ begin
   end;
 end;
 
+function Base64Encode(const Input: PByte; InputLength: Integer): string;
+const
+  Base64Chars: array[0..63] of Char =
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+var
+  i, j: Integer;
+  Output: TStringList;
+  Temp: array[0..2] of Byte;
+  Encoded: array[0..3] of Char;
+begin
+  Output := TStringList.Create;
+  try
+    for i := 0 to (InputLength div 3) - 1 do
+    begin
+      Move(Pointer(Integer(Input) + i * 3)^, Temp[0], 3);
+
+      Encoded[0] := Base64Chars[Temp[0] shr 2];
+      Encoded[1] := Base64Chars[((Temp[0] and $03) shl 4) or (Temp[1] shr 4)];
+      Encoded[2] := Base64Chars[((Temp[1] and $0F) shl 2) or (Temp[2] shr 6)];
+      Encoded[3] := Base64Chars[Temp[2] and $3F];
+
+      Output.Add(Encoded[0] + Encoded[1] + Encoded[2] + Encoded[3]);
+    end;
+
+    // Handle padding
+    j := InputLength mod 3;
+    if j > 0 then
+    begin
+      Temp[0] := 0; Temp[1] := 0; Temp[2] := 0;
+      Move(Pointer(Integer(Input) + InputLength - j)^, Temp[0], j);
+
+      Encoded[0] := Base64Chars[Temp[0] shr 2];
+      Encoded[1] := Base64Chars[((Temp[0] and $03) shl 4) or (Temp[1] shr 4)];
+
+      if j=2 then
+        Encoded[2] := Base64Chars[((Temp[1] and $0F) shl 2)]
+      else
+        Encoded[2] := '=';
+
+      Encoded[3] := '=';
+
+      Output.Add(Encoded[0] + Encoded[1] + Encoded[2] + Encoded[3]);
+    end;
+
+    Result := StringReplace(Output.Text, #13#10, '', [rfReplaceAll]); // Remove line breaks
+  finally
+    Output.Free;
+  end;
+end;
+
 { Certificate List Retrieval }
 
 //  GetCertificates
@@ -546,6 +596,8 @@ var
   pChainElement: PCERT_CHAIN_ELEMENT;
   ppChainElement: ^PCERT_CHAIN_ELEMENT;
   ppSignCertContext: ^PCERT_CONTEXT;
+
+  pem: string;
 begin
   hStore := nil;
   pCertContext := nil;
@@ -574,13 +626,13 @@ begin
     // Standard wincert
     SignPara.cbSize := SizeOf(CRYPT_SIGN_MESSAGE_PARA);
     SignPara.dwMsgEncodingType := X509_ASN_ENCODING or PKCS_7_ASN_ENCODING;
-    SignPara.pSigningCert := nil;
     SignPara.pSigningCert := pCertContext;
     SignPara.HashAlgorithm.pszObjId := PAnsiChar(GetHashOid(pCertContext));
 
     // Cades
     CadesSignPara.dwSize := SizeOf(CadesSignPara);
     CadesSignPara.dwCadesType := CADES_BES;
+    //CadesSignPara.dwCadesType := PKCS7_TYPE;
 
     // Wrapper
     Para.dwSize := SizeOf(CADES_SIGN_MESSAGE_PARA);
@@ -602,7 +654,7 @@ begin
     begin
       if pChainContext.rgpChain^.cElement > 1 then
       begin
-        SignPara.cMsgCert := pChainContext.rgpChain^.cElement -1;
+        SignPara.cMsgCert := 1 ;// pChainContext.rgpChain^.cElement -1;
         GetMem(SignPara.rgpMsgCert, SignPara.cMsgCert * SizeOf(PCERT_CONTEXT));
 
         ppChainElement := pChainContext.rgpChain^.rgpElement;
@@ -625,7 +677,7 @@ begin
     // Create signed message
     if not CadesSignMessage(
       @Para,
-      false,
+      true,
       1,
       @pbToBeSigned,
       @cbToBeSigned,
@@ -633,10 +685,22 @@ begin
     RaiseError(ERR_FILE_SIGN_FAILED);
 
    // Save the signed message
-   WriteFileContent(
+
+   {
+    WriteFileContent(
     SigPath,
     pSignedMessage^.pbData,
     pSignedMessage^.cbData);
+   }
+
+
+   pem := Base64Encode(pSignedMessage^.pbData, pSignedMessage^.cbData);
+   WriteFileContent(
+      SigPath,
+      @pem[1],
+      Length(pem));
+
+
 
   finally
     if Assigned(SignPara.rgpMsgCert) then
