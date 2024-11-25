@@ -45,29 +45,18 @@ type
     property ErrorCode: DWORD read FErrorCode;
   end;
 
+procedure InitializeCades;
+procedure FinalizeCades;
+
 function GetCertificates(const Prefix: string): TList;
-
 function GetUniqueSignatureFileName(const FileName: string): string;
-
-
-procedure SignFile(
-  const FilePath: string;
-  const SigPath: string;
-  const thumbprint: T20Bytes;
-  const password: string);
-
-procedure SignFileStr(
-  const FilePath: string;
-  const SigPath: string;
-  const ThumbprintStr: string;
-  const password: string);
+procedure SignFile(const FilePath: string; const SigPath: string; const thumbprint: T20Bytes; const password: string);
+procedure SignFileStr(const FilePath: string; const SigPath: string; const ThumbprintStr: string;const password: string);
 
 implementation
 
 type
    TBytes = array of Byte;
-
-{ Error Handling }
 
 const
   ERR_OPEN_STORE_FAILED  = 'Не удалось открыть хранилище сертификатов.';
@@ -84,7 +73,20 @@ const
   ERR_ACQ_CONETXT_FAILED = 'Не удалось получить контекст криптопровайдера';
   ERR_SET_PIN_FAILED = 'Не удалось применить пароль ЭЦП ("ПИН")';
   ERR_NOT_20_BYTES = 'Размер уникального идентификатора ЭЦП не равен 20 байтам';
-  ERR_FAILED_TO_CONVERT_TILE = 'Failed to convert FILETIME to TDateTime';
+  ERR_FAILED_TO_CONVERT_TILE = 'Не удалось преобразовать FILETIME в TDateTime';
+  ERR_CADES_NOT_LOADED = 'Cades.dll не загружена';
+  ERR_CADES_FAILED_TO_LOAD = 'Не удалось загрузить сades.dll';
+
+{ Cades.dll interface }
+
+var
+  CadesHandle: HMODULE = 0;
+  CadesSignMessage: function(pSignPara: PCADES_SIGN_MESSAGE_PARA; fDetachedSignature: BOOL;
+                             cToBeSigned: DWORD; rgpbToBeSigned: Pointer; rgcbToBeSigned: PDWORD;
+                             ppSignedBlob: PPCRYPT_DATA_BLOB): BOOL; stdcall;
+  CadesFreeBlob: function(pBlob: PCRYPT_DATA_BLOB): BOOL; stdcall;
+
+{ Error Handling }
 
 constructor ECadesSignerException.Create(const Message: string);
 var Msg: string;
@@ -108,6 +110,47 @@ end;
 procedure RaiseError(const Message: string);
 begin
   raise ECadesSignerException.Create(Message);
+end;
+
+{ Cades initialization / finalization }
+
+//  InitializeCades
+//  interface
+//  Загрузить cades.dll, получить адреса используемых функций
+//  Исключение ECadesSignerException
+//      Если не удалось загрузить cades.dll или получить адреса используемых функций
+
+procedure InitializeCades;
+begin
+  if CadesHandle = 0 then
+  begin
+    CadesHandle := LoadLibrary('cades.dll');
+    if CadesHandle = 0 then RaiseError(ERR_CADES_FAILED_TO_LOAD)
+    else
+    begin
+      @CadesSignMessage := GetProcAddress(CadesHandle, 'CadesSignMessage');
+      @CadesFreeBlob := GetProcAddress(CadesHandle, 'CadesFreeBlob');
+      if not Assigned(@CadesSignMessage) or not Assigned(@CadesFreeBlob) then
+      begin
+        FreeLibrary(CadesHandle);
+        CadesHandle := 0;
+        RaiseError(ERR_CADES_FAILED_TO_LOAD)
+      end;
+    end
+   end
+end;
+
+//  FinalizeCades
+//  interface
+//  Выгрузить cades.dll
+
+procedure FinalizeCades;
+begin
+  if CadesHandle <> 0 then
+  begin
+    FreeLibrary(CadesHandle);
+    CadesHandle := 0;
+  end;
 end;
 
 { T20Bytes helpers }
@@ -394,7 +437,7 @@ end;
 { Certificate List Retrieval }
 
 //  GetCertificates
-// interface
+//  interface
 //  Получить список сертификатов, OID которых соответствует заданному префиксу
 //  OID - идентификатора криптографического алгоритма
 //  Вероятно, префикс всегда будет '1.2.643', где
@@ -468,7 +511,7 @@ end;
 
 //  SignFile
 //  interface
-//  Формирует подпись для содержимого файла, сохраняет подпись целевой файл
+//  Формирует подпись для содержимого файла, сохраняет подпись в целевой файл
 //  Если целевой файл сушествует, он перезаписывается
 //  Параметры
 //      const string FileName - путь к файлу
@@ -478,6 +521,7 @@ end;
 //  Результат
 //      string путь к файлу с подписью
 //  Исключение ECadesSignerException
+//      Если cades.dll не загружена
 //      Если не удалось отрыть файл
 //      Если не удалось прочитать содержимое файла
 //      Если не удалось отрыть хранилище сертификатов
@@ -495,6 +539,8 @@ begin
   pSignedMessage := nil;
   pChainContext := nil;
   Certs := TList.Create;
+
+  if CadesHandle = 0 then RaiseError(ERR_CADES_NOT_LOADED);
 
   try
     FillChar(SignPara, SizeOf(SignPara), 0);
@@ -581,6 +627,7 @@ end;
 //  Результат
 //      string путь к файлу с подписью
 //  Исключение ECadesSignerException
+//      Если cades.dll не загружена
 //      Если не удалось отрыть файл
 //      Если не удалось прочитать содержимое файла
 //      Если не удалось отрыть хранилище сертификатов

@@ -85,6 +85,8 @@ begin
     SetConsoleOutputCP(1251);
     SetConsoleCP(1251);
 
+    InitializeCades;
+
     Certificates := GetCertificates('1.2.643'); // Стандарт.ИСО.Россия = ГОСТ
 
     if Certificates.Count > 0 then
@@ -92,8 +94,7 @@ begin
       WriteLn('Сертификаты с поддержкой шифрования по алгоритмам ГОСТ');
       PrintTableHeader;
 
-      for i := 0 to Certificates.Count - 1 do
-        PrintTableRow(i, TCertOption(Certificates[i]^));
+      for i := 0 to Certificates.Count - 1 do PrintTableRow(i, TCertOption(Certificates[i]^));
 
       SelectedIndex := PromptUserToSelectCertificate(Certificates);
       SelectedCert := TCertOption(Certificates[SelectedIndex - 1]^);
@@ -102,14 +103,12 @@ begin
       SignFileStr(fileName, sigFileName, SelectedCert.ThumbprintStr, '');
       Writeln('Подпись сохранена в файл ', sigFileName);
     end
-    else
-      WriteLn('Не найдено ни одного сертификата с поддержкой шифрования по ГОСТ')
+    else WriteLn('Не найдено ни одного сертификата с поддержкой шифрования по ГОСТ')
   except
-    on E: Exception do
-      WriteLn('Ошибка: ', E.Message)
+    on E: Exception do WriteLn('Ошибка: ', E.Message)
   end;
-  if Certificates <> nil then
-    Certificates.Free;
+  if Certificates <> nil then Certificates.Free;
+  FinalizeCades;
   WriteLn('Нажмите <ENTER> для завершения...');
   Readln;
 end.

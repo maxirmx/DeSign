@@ -58,6 +58,24 @@ function GetCertificates(const Prefix: string): TList;
 * *Результат*:
   ** Возвращает список сертификатов в виде `TList`, содержащий объекты `TCertOption`.
 
+==== `InitializeCades`
+
+[source,delphi]
+----
+procedure InitializeCades;
+----
+
+Загружает ```cades.dll```. Эта библиотека нужна при вызове ```SignFile/SignFileStr``` и она грузится динамически с помощью ```LoadLibrary```. См. выше соображения относительно установки.
+
+==== `InitializeCades`
+
+[source,delphi]
+----
+procedure FinalizeCades;
+----
+
+Выгружает cades.dll
+
 ==== `SignFile`
 
 [source,delphi]
