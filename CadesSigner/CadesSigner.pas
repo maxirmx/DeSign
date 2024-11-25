@@ -1,16 +1,16 @@
 unit CadesSigner;
-
 {$TypedAddress On}
-
 interface
 
 uses
   Windows,
   SysUtils,
   Classes,
+  Cades,
   JwaWinCrypt,
   GostOIDs,
-  Cades;
+
+  Dialogs;
 
 type
    T20Bytes = array[0..19] of Byte;  // SHA-1 hash is 20 bytes
@@ -26,7 +26,7 @@ type
     FriendlyName: string;
     Thumbprint: T20Bytes;
     ThumbprintStr: string;
-    StartDateTime, EndDateTime: TDateTime;
+    StartDateTime, EndDateTime: TDateTime;        // LoadLibrary
   end;
 
   PCertOption = ^TCertOption;
@@ -87,16 +87,13 @@ const
   ERR_FAILED_TO_CONVERT_TILE = 'Failed to convert FILETIME to TDateTime';
 
 constructor ECadesSignerException.Create(const Message: string);
-var
-  Msg: string;
+var Msg: string;
 begin
   FErrorCode := GetLastError;
-  if FErrorCode <> 0 then
-    Msg :=
-      Format('%s [0x%s] %s',
-      [Message, IntToHex(FErrorCode, 8), SysErrorMessage(FErrorCode)])
-  else
-    Msg := Message; // Use the original message if there's no error code.
+
+  if FErrorCode <> 0
+  then Msg:= Format('%s [0x%s] %s', [Message, IntToHex(FErrorCode, 8), SysErrorMessage(FErrorCode)])
+  else Msg:= Message; // Use the original message if there's no error code.
 
   inherited Create(Msg);
 end;
@@ -123,32 +120,24 @@ end;
 //  Результат
 //      строка шестнадцатитериичное читаемое представление
 function T20BytesToHexString(const Value: T20Bytes): string;
-var
-  I: Integer;
+var I: Integer;
 begin
   Result := '';
   for I := Low(Value) to High(Value) do
-    Result := Result + IntToHex(Value[I], 2);
+  Result := Result + IntToHex(Value[I], 2);
 end;
 
 //  HexStringToT20Bytes
 //  private
 //  Преобразование строки в thumbprint
-//  Параметры
-//      const Hex - шестнадцатитериичное читаемое представление thumbprint
-//  Результат
-//      thumbprint в виде T20Bytes
-//  Исключение ECadesSignerException
-//      Если во входном пераметре не ровно 40 символов
+//  Параметры const Hex - шестнадцатитериичное читаемое представление thumbprint
+//  Результат thumbprint в виде T20Bytes
+//  Исключение ECadesSignerException Если во входном пераметре не ровно 40 символов
 function HexStringToT20Bytes(const Hex: string): T20Bytes;
-var
-  I: Integer;
+var I: Integer;
 begin
-  if Length(Hex) <> 40 then  // 20 bytes * 2 hex digits per byte
-    RaiseError(ERR_NOT_20_BYTES);
-
-  for I := 0 to 19 do
-    Result[I] := StrToInt('$' + Copy(Hex, (I * 2) + 1, 2));
+  if Length(Hex) <> 40 then RaiseError(ERR_NOT_20_BYTES);                        // 20 bytes * 2 hex digits per byte
+  for I := 0 to 19 do Result[I] := StrToInt('$' + Copy(Hex, (I * 2) + 1, 2));
 end;
 
 { Certificate helpers }
@@ -163,15 +152,12 @@ end;
 //      Если конвертация не удалась
 
 function FileTimeToDateTime(const FileTime: TFileTime): TDateTime;
-var
-  SystemTime: TSystemTime;
+var SystemTime: TSystemTime;
 begin
-  if FileTimeToSystemTime(FileTime, SystemTime) then
-    Result := SystemTimeToDateTime(SystemTime)
-  else
-    raise Exception.Create(ERR_FAILED_TO_CONVERT_TILE);
+  if FileTimeToSystemTime(FileTime, SystemTime)
+  then Result:= SystemTimeToDateTime(SystemTime)
+  else raise Exception.Create(ERR_FAILED_TO_CONVERT_TILE);
 end;
-
 
 //  GetCertificateByThumbprint
 //  private
@@ -186,25 +172,14 @@ end;
 //  Исключение ECadesSignerException
 //      Если не удалось найти сертификат
 
-function GetCertificateByThumbprint(
-    const hStore: HCERTSTORE;
-    const thumbprint: T20Bytes): PCCERT_CONTEXT;
-var
-  pCertContext: PCCERT_CONTEXT;
-  hashBlob: CRYPT_HASH_BLOB;
+function GetCertificateByThumbprint(const hStore: HCERTSTORE; const thumbprint: T20Bytes): PCCERT_CONTEXT;
+var pCertContext: PCCERT_CONTEXT; hashBlob: CRYPT_HASH_BLOB;
 begin
-  hashBlob.cbData := Length(thumbprint);
-  hashBlob.pbData := @thumbprint[0];
+  hashBlob.cbData:= Length(thumbprint);
+  hashBlob.pbData:= @thumbprint[0];
 
-  pCertContext := CertFindCertificateInStore(
-      hStore,
-      X509_ASN_ENCODING or PKCS_7_ASN_ENCODING,
-      0,
-      CERT_FIND_HASH,
-      @hashBlob,
-      nil);
-  if pCertContext = nil then
-    RaiseError(ERR_FIND_THUMB_FAILED);
+  pCertContext:= CertFindCertificateInStore(hStore, X509_ASN_ENCODING or PKCS_7_ASN_ENCODING, 0, CERT_FIND_HASH, @hashBlob, nil);
+  if pCertContext = nil then RaiseError(ERR_FIND_THUMB_FAILED);
 
   Result := pCertContext;
 end;
@@ -219,19 +194,13 @@ end;
 //      Если алгоритм неизвестен, возвращает пустую строку
 
 function GetHashOid(const pCert: PCCERT_CONTEXT): string;
-var
-  pKeyAlg: string;
+var pKeyAlg: string;
 begin
-  pKeyAlg := string(pCert.pCertInfo.SubjectPublicKeyInfo.Algorithm.pszObjId);
+  pKeyAlg:= string(pCert.pCertInfo.SubjectPublicKeyInfo.Algorithm.pszObjId);
 
-  if pKeyAlg = CP_GOST_R3410EL then
-    Result := CP_GOST_R3411
-  else if pKeyAlg = CP_GOST_R3410_12_256 then
-    Result := CP_GOST_R3411_12_256
-  else if pKeyAlg = CP_GOST_R3410_12_512 then
-    Result := CP_GOST_R3411_12_512
-  else
-    Result := '';
+  if pKeyAlg = CP_GOST_R3410EL      then Result:= CP_GOST_R3411 else
+  if pKeyAlg = CP_GOST_R3410_12_256 then Result:= CP_GOST_R3411_12_256 else
+  if pKeyAlg = CP_GOST_R3410_12_512 then Result:= CP_GOST_R3411_12_512 else Result := '';
 end;
 
 //  SetPassword
@@ -244,61 +213,35 @@ end;
 //      Если не удалось получить доступ к свойствам провайдера
 //      Если не удалось применит пароль
 
-procedure SetPassword(
-  const pCert: PCCERT_CONTEXT;
-  const Password: string);
-var
-  pProvKey: PCRYPT_KEY_PROV_INFO;
-  dwProvKeyInfoSize: DWORD;
-  dwKeytype: DWORD;
-  hProvider: HCRYPTPROV;
+procedure SetPassword(const pCert: PCCERT_CONTEXT; const Password: string);
+var pProvKey: PCRYPT_KEY_PROV_INFO; dwProvKeyInfoSize: DWORD; dwKeytype: DWORD; hProvider: HCRYPTPROV;
 begin
   pProvKey := nil;
   dwProvKeyInfoSize := 0;
   try
-    if not CertGetCertificateContextProperty(
-      pCert,
-      CERT_KEY_PROV_INFO_PROP_ID,
-      pProvKey,
-      dwProvKeyInfoSize) then
-      RaiseError(ERR_GET_PROP_FAILED);
+    if not CertGetCertificateContextProperty(pCert, CERT_KEY_PROV_INFO_PROP_ID, pProvKey, dwProvKeyInfoSize)
+    then RaiseError(ERR_GET_PROP_FAILED);
 
     GetMem(pProvKey, dwProvKeyInfoSize);
-    if not CertGetCertificateContextProperty(pCert,
-      CERT_KEY_PROV_INFO_PROP_ID,
-      pProvKey,
-      dwProvKeyInfoSize) then
-      RaiseError(ERR_GET_PROP_FAILED);
+    if not CertGetCertificateContextProperty(pCert, CERT_KEY_PROV_INFO_PROP_ID, pProvKey, dwProvKeyInfoSize)
+    then RaiseError(ERR_GET_PROP_FAILED);
 
-      if pProvKey^.dwKeySpec = AT_SIGNATURE then
-        dwKeyType := PP_SIGNATURE_PIN
-      else
-        dwKeyType := PP_KEYEXCHANGE_PIN;
+    if pProvKey^.dwKeySpec = AT_SIGNATURE then dwKeyType := PP_SIGNATURE_PIN else dwKeyType := PP_KEYEXCHANGE_PIN;
 
-    if not CryptAcquireContextW(
-      hProvider,
-      pProvKey^.pwszContainerName,
-      pProvKey^.pwszProvName,
-      pProvKey^.dwProvType,
-      CRYPT_MACHINE_KEYSET) then
-      RaiseError(ERR_ACQ_CONETXT_FAILED);
+    if not CryptAcquireContextW(hProvider, pProvKey^.pwszContainerName, pProvKey^.pwszProvName, pProvKey^.dwProvType, CRYPT_MACHINE_KEYSET)
+    then RaiseError(ERR_ACQ_CONETXT_FAILED);
 
-    if not CryptSetProvParam(
-      hProvider,
-      dwKeyType,
-      PBYTE(Password),
-      0) then
-      RaiseError(ERR_SET_PIN_FAILED);
+    if not CryptSetProvParam(hProvider, dwKeyType, PBYTE(Password), 0)
+    then RaiseError(ERR_SET_PIN_FAILED);
   finally
-    if Assigned(pProvKey) then
-      FreeMem(pProvKey);
-    end
+    if Assigned(pProvKey) then FreeMem(pProvKey);
+  end;
 end;
 
 { File helpers }
 
 //  GetUniqueSignatureFileName
-//  private
+//  private (сохранена на всякий случай)
 //  Вычисление пути к файлу с подписью
 //  Алгоритм
 //    Меняем расширение к файлу, который подписываем, на 'sig'
@@ -313,17 +256,10 @@ end;
 //      Если не удалось создать уникальное расширение для файла подписи (а вдруг ...)
 
 function GetUniqueSignatureFileName(const FileName: string): string;
-var
-  LastDot: Integer;
-  BaseName, Extension, NewFileName: string;
-  Counter: Integer;
+var LastDot: Integer; BaseName, Extension, NewFileName: string; Counter: Integer;
 begin
   LastDot := LastDelimiter('.', FileName);
-
-  if LastDot = 0 then
-    BaseName := FileName
-  else
-    BaseName := Copy(FileName, 1, LastDot - 1);
+  if LastDot = 0 then BaseName:= FileName else BaseName:= Copy(FileName, 1, LastDot - 1);
 
   Extension := '.sig';
   NewFileName := BaseName + Extension;
@@ -331,8 +267,8 @@ begin
 
   while FileExists(NewFileName) do
   begin
-    if Counter = MaxInt then
-      RaiseError(ERR_FAILED_TO_UNIQ);
+    if Counter = MaxInt then RaiseError(ERR_FAILED_TO_UNIQ);
+    
     NewFileName := BaseName + Extension + IntToStr(Counter);
     Inc(Counter);
   end;
@@ -343,28 +279,23 @@ end;
 //  ReadFileContent
 //  private
 //  Чтение содержимого файла в массив байт
-//  Параметры
-//      const string FileName - путь к файлу
-//  Результат
-//      TBytes - содержимое файла
+//  Параметры const string FileName - путь к файлу
+//  Результат TBytes - содержимое файла
 //  Исключение ECadesSignerException
 //      Если не удалось отрыть файл
 //      Если не удалось прочитать содержимое файла
 
 function ReadFileContent(const FilePath: string): TBytes;
-var
-  FileStream: TFileStream;
-  FileSize: Integer;
+var FileStream: TFileStream; FileSize: Integer;
 begin
-  if not FileExists(FilePath) then
-    RaiseError(ERR_FAILED_TO_OPEN + '"' + FilePath + '"');
+  if not FileExists(FilePath) then RaiseError(ERR_FAILED_TO_OPEN + '"' + FilePath + '"');
 
   FileStream := TFileStream.Create(FilePath, fmOpenRead or fmShareDenyWrite);
   try
     FileSize := FileStream.Size;
     SetLength(Result, FileSize);
-    if FileStream.Read(Result[0], FileSize) <> FileSize then
-      RaiseError(ERR_FAILED_TO_READ + '"' + FilePath + '"');
+
+    if FileStream.Read(Result[0], FileSize) <> FileSize then RaiseError(ERR_FAILED_TO_READ + '"' + FilePath + '"');
   finally
     FileStream.Free;
   end;
@@ -382,15 +313,11 @@ end;
 //      Если не удалось создать файл
 //      Если не удалось записать содержимое файла
 
-procedure WriteFileContent(
-  const FileName: string;
-  const Data: PByte;
-  const Length: integer);
-var
-  FileStream: TFileStream;
+procedure WriteFileContent(const FileName: string; const Data: PByte; const Length: integer);
+var FileStream: TFileStream;
 begin
   try
-    FileStream := TFileStream.Create(FileName, fmCreate or fmShareExclusive);
+    FileStream:= TFileStream.Create(FileName, fmCreate or fmShareExclusive);
   except
     on E: Exception do
     begin
@@ -400,12 +327,20 @@ begin
   end;
 
   try
-    if FileStream.Write(Data^, Length) <> Length then
-      RaiseError(ERR_FAILED_TO_WRITE + ' "' + FileName + '"');
+    if FileStream.Write(Data^, Length) <> Length then RaiseError(ERR_FAILED_TO_WRITE + ' "' + FileName + '"');
   finally
     FileStream.Free;
   end;
 end;
+
+//  Base64Encode
+//  private (сохранена на всякмй случай)
+//  Преобразует область памяти заданного размера в base64 строку
+//  Параметры
+//      const PByte Input - указатель на память
+//      const Integer InputLength - размер (в байтах)
+//  Результат
+//      строка base64 (выровненная на границу 4 симоволов согласно спецификации)
 
 function Base64Encode(const Input: PByte; InputLength: Integer): string;
 const
@@ -436,15 +371,13 @@ begin
     if j > 0 then
     begin
       Temp[0] := 0; Temp[1] := 0; Temp[2] := 0;
-      Move(Pointer(Integer(Input) + InputLength - j)^, Temp[0], j);
+     Move(Pointer(Integer(Input) + InputLength - j)^, Temp[0], j);
 
       Encoded[0] := Base64Chars[Temp[0] shr 2];
       Encoded[1] := Base64Chars[((Temp[0] and $03) shl 4) or (Temp[1] shr 4)];
 
-      if j=2 then
-        Encoded[2] := Base64Chars[((Temp[1] and $0F) shl 2)]
-      else
-        Encoded[2] := '=';
+      if j=2 then Encoded[2] := Base64Chars[((Temp[1] and $0F) shl 2)]
+      else Encoded[2] := '=';
 
       Encoded[3] := '=';
 
@@ -456,6 +389,7 @@ begin
     Output.Free;
   end;
 end;
+
 
 { Certificate List Retrieval }
 
@@ -481,61 +415,40 @@ end;
 //      Если не прочитать аттрибуты сертификата
 
 function GetCertificates(const Prefix: string): TList;
-var
-  Res: TList;
-  hStoreHandle: HCERTSTORE;
-  pCertContext: PCCERT_CONTEXT;
-  AlgorithmId: string;
-  FriendlyName: array[0..255] of AnsiChar;
-  Sha1Thumbprint: T20Bytes;
-  Size: DWORD;
-  CertOptionPtr: PCertOption;
+var Res: TList; hStoreHandle: HCERTSTORE; pCertContext: PCCERT_CONTEXT; AlgorithmId: string; FriendlyName: array[0..255] of AnsiChar;
+    Sha1Thumbprint: T20Bytes; Size: DWORD; CertOptionPtr: PCertOption;
 begin
   Res := TList.Create;
 
   hStoreHandle := CertOpenSystemStore(0, 'MY');
-  if hStoreHandle = nil then
-    RaiseError(ERR_OPEN_STORE_FAILED);
+  if hStoreHandle = nil then RaiseError(ERR_OPEN_STORE_FAILED);
 
   try
     pCertContext := nil;
     while True do
     begin
       pCertContext := CertEnumCertificatesInStore(hStoreHandle, pCertContext);
-      if pCertContext = nil then
-        Break;
+      if pCertContext = nil then Break;
 
       AlgorithmId := string(pCertContext^.pCertInfo^.SignatureAlgorithm.pszObjId);
-      if Pos(Prefix, AlgorithmId) <> 1 then
-        Continue;
+      if Pos(Prefix, AlgorithmId) <> 1 then Continue;
 
-      if CertGetNameStringA(
-          pCertContext,
-          CERT_NAME_FRIENDLY_DISPLAY_TYPE,
-          0,
-          nil,
-          FriendlyName,
-          SizeOf(FriendlyName)) = 0 then
-          RaiseError(ERR_GET_SUBJECT_FAILED);
+      if CertGetNameStringA(pCertContext, CERT_NAME_FRIENDLY_DISPLAY_TYPE, 0, nil, FriendlyName, SizeOf(FriendlyName)) = 0
+      then RaiseError(ERR_GET_SUBJECT_FAILED);
 
       Size := SizeOf(Sha1Thumbprint);
-      if not CertGetCertificateContextProperty(
-          pCertContext,
-          CERT_HASH_PROP_ID,
-          @Sha1Thumbprint,
-          Size) then
-      begin
-        RaiseError(ERR_GET_THUMB_FAILED)
-      end;
+      if not CertGetCertificateContextProperty(pCertContext, CERT_HASH_PROP_ID, @Sha1Thumbprint, Size)
+      then RaiseError(ERR_GET_THUMB_FAILED);
 
       New(CertOptionPtr);
+
       CertOptionPtr^.FriendlyName := string(FriendlyName);
       Move(Sha1Thumbprint[0], CertOptionPtr^.Thumbprint[0], Size);
+
       CertOptionPtr^.ThumbprintStr := T20BytesToHexString(CertOptionPtr^.Thumbprint);
-      CertOptionPtr^.StartDateTime :=
-        FileTimeToDateTime(TFileTime(pCertContext^.pCertInfo^.NotBefore));
-      CertOptionPtr^.EndDateTime :=
-        FileTimeToDateTime(TFileTime(pCertContext^.pCertInfo^.NotAfter));
+      CertOptionPtr^.StartDateTime := FileTimeToDateTime(TFileTime(pCertContext^.pCertInfo^.NotBefore));
+      CertOptionPtr^.EndDateTime   := FileTimeToDateTime(TFileTime(pCertContext^.pCertInfo^.NotAfter));
+
       Res.Add(CertOptionPtr);
     end;
   except
@@ -546,8 +459,7 @@ begin
     end;
   end;
 
-  if not CertCloseStore(hStoreHandle, 0) then
-    RaiseError(ERR_CLOSE_STORE_FAILED);
+  if not CertCloseStore(hStoreHandle, 0) then RaiseError(ERR_CLOSE_STORE_FAILED);
 
   Result := Res;
 end;
@@ -562,7 +474,7 @@ end;
 //      const string FileName - путь к файлу
 //      const string FileName - путь к файлу с подписью (целевому)
 //      const sring Thumbprint - thumbprint, по которому ищем сертификат
-//      const string Password - пароль; если это поле путое, применяться не будет
+//      const string Password - пароль; если это поле пустое, применяться не будет
 //  Результат
 //      string путь к файлу с подписью
 //  Исключение ECadesSignerException
@@ -573,92 +485,56 @@ end;
 //      Если не удалось записать содержимое файла
 //      Если были проблемы с подписанием, например, не подошёл пароль
 
-procedure SignFile(
-  const FilePath: string;
-  const SigPath: string;
-  const Thumbprint: T20Bytes;
-  const Password: string);
-var
-  hStore: HCERTSTORE;
-  pCertContext: PCCERT_CONTEXT;
-  pSignedMessage: PCRYPT_DATA_BLOB;
-  pChainContext: PCERT_CHAIN_CONTEXT;
-  Certs: TList;
-  SignPara: CRYPT_SIGN_MESSAGE_PARA;
-  CadesSignPara: CADES_SIGN_PARA;
-  Para: CADES_SIGN_MESSAGE_PARA;
-  FileContent: TBytes;
-  ChainPara: CERT_CHAIN_PARA;
-  i: Integer;
-  pbToBeSigned: PByte;
-  cbToBeSigned: DWORD;
-
-  pChainElement: PCERT_CHAIN_ELEMENT;
-  ppChainElement: ^PCERT_CHAIN_ELEMENT;
-  ppSignCertContext: ^PCERT_CONTEXT;
-
-  pem: string;
+procedure SignFile(const FilePath: string; const SigPath: string; const Thumbprint: T20Bytes; const Password: string);
+var hStore: HCERTSTORE; pCertContext: PCCERT_CONTEXT; pSignedMessage: PCRYPT_DATA_BLOB; pChainContext: PCERT_CHAIN_CONTEXT; Certs: TList; SignPara: CRYPT_SIGN_MESSAGE_PARA;
+    CadesSignPara: CADES_SIGN_PARA; Para: CADES_SIGN_MESSAGE_PARA; FileContent: TBytes; ChainPara: CERT_CHAIN_PARA; i: Integer; pbToBeSigned: PByte; cbToBeSigned: DWORD;
+    pChainElement: PCERT_CHAIN_ELEMENT; ppChainElement: ^PCERT_CHAIN_ELEMENT; ppSignCertContext: ^PCERT_CONTEXT;
 begin
   hStore := nil;
   pCertContext := nil;
   pSignedMessage := nil;
   pChainContext := nil;
   Certs := TList.Create;
+
   try
     FillChar(SignPara, SizeOf(SignPara), 0);
     FillChar(CadesSignPara, SizeOf(CadesSignPara), 0);
     FillChar(Para, SizeOf(Para), 0);
     FillChar(ChainPara, SizeOf(ChainPara), 0);
 
-    hStore := CertOpenSystemStore(0, 'MY');
-    if hStore = nil then
-      RaiseError(ERR_OPEN_STORE_FAILED);
+    hStore:= CertOpenSystemStore(0, 'MY');
+    if hStore = nil then RaiseError(ERR_OPEN_STORE_FAILED);
 
-    // Signer certificate
-    pCertContext := GetCertificateByThumbprint(hStore, Thumbprint);
+    pCertContext:= GetCertificateByThumbprint(hStore, Thumbprint);              // Signer certificate
 
-    // The data to be signed
-    FileContent := ReadFileContent(FilePath);
-    pbToBeSigned := Pointer(FileContent);
-    cbToBeSigned := Length(FileContent);
+    FileContent:= ReadFileContent(FilePath);                                    // The data to be signed
+    pbToBeSigned:= Pointer(FileContent);
+    cbToBeSigned:= Length(FileContent);
+                                                                                 // Initialize sign parameters
+    SignPara.cbSize:= SizeOf(CRYPT_SIGN_MESSAGE_PARA);                          // Standard wincert
+    SignPara.dwMsgEncodingType:= X509_ASN_ENCODING or PKCS_7_ASN_ENCODING;
+    SignPara.pSigningCert:= nil;
+    SignPara.pSigningCert:= pCertContext;
+    SignPara.HashAlgorithm.pszObjId:= PAnsiChar(GetHashOid(pCertContext));
 
-    // Initialize sign parameters
-    // Standard wincert
-    SignPara.cbSize := SizeOf(CRYPT_SIGN_MESSAGE_PARA);
-    SignPara.dwMsgEncodingType := X509_ASN_ENCODING or PKCS_7_ASN_ENCODING;
-    SignPara.pSigningCert := pCertContext;
-    SignPara.HashAlgorithm.pszObjId := PAnsiChar(GetHashOid(pCertContext));
-
-    // Cades
-    CadesSignPara.dwSize := SizeOf(CadesSignPara);
+    CadesSignPara.dwSize := SizeOf(CadesSignPara);                               // Cades
     CadesSignPara.dwCadesType := CADES_BES;
-    //CadesSignPara.dwCadesType := PKCS7_TYPE;
 
-    // Wrapper
-    Para.dwSize := SizeOf(CADES_SIGN_MESSAGE_PARA);
+    Para.dwSize := SizeOf(CADES_SIGN_MESSAGE_PARA);                              // Wrapper
     Para.pSignMessagePara := @SignPara;
     Para.pCadesSignPara := @CadesSignPara;
 
-    // Get certificate chain
-    ChainPara.cbSize := SizeOf(ChainPara);
+    ChainPara.cbSize := SizeOf(ChainPara);                                       // Get certificate chain
 
-    if CertGetCertificateChain(
-      0,
-      pCertContext,
-      nil,
-      nil,
-      @ChainPara,
-      0,
-      nil,
-      @pChainContext) then
+    if CertGetCertificateChain(0, pCertContext, nil, nil, @ChainPara, 0, nil, @pChainContext) then
     begin
       if pChainContext.rgpChain^.cElement > 1 then
       begin
-        SignPara.cMsgCert := 1 ;// pChainContext.rgpChain^.cElement -1;
+        SignPara.cMsgCert := pChainContext.rgpChain^.cElement -1;
         GetMem(SignPara.rgpMsgCert, SignPara.cMsgCert * SizeOf(PCERT_CONTEXT));
 
-        ppChainElement := pChainContext.rgpChain^.rgpElement;
-        ppSignCertContext := SignPara.rgpMsgCert;
+        ppChainElement:= pChainContext.rgpChain^.rgpElement;
+        ppSignCertContext:= SignPara.rgpMsgCert;
 
         for i := 0 to SignPara.cMsgCert - 1 do
         begin
@@ -670,49 +546,24 @@ begin
       end;
     end;
 
+    if password <> '' then SetPassword(pCertContext, Password);
 
-    if password <> '' then
-      SetPassword(pCertContext, Password);
+   if not CadesSignMessage(@Para, true, 1, @pbToBeSigned, @cbToBeSigned, @pSignedMessage)     // Create signed message
+   then RaiseError(ERR_FILE_SIGN_FAILED);
 
-    // Create signed message
-    if not CadesSignMessage(
-      @Para,
-      true,
-      1,
-      @pbToBeSigned,
-      @cbToBeSigned,
-      @pSignedMessage) then
-    RaiseError(ERR_FILE_SIGN_FAILED);
+   WriteFileContent(SigPath, pSignedMessage^.pbData, pSignedMessage^.cbData);    // Save the signed message
 
-   // Save the signed message
-
-   {
-    WriteFileContent(
-    SigPath,
-    pSignedMessage^.pbData,
-    pSignedMessage^.cbData);
+   {  В качестве альтернативы можно писать base64 строку
+   
+    pem := Base64Encode(pSignedMessage^.pbData, pSignedMessage^.cbData);
+    WriteFileContent(SigPath, @pem[1], Length(pem));
    }
-
-
-   pem := Base64Encode(pSignedMessage^.pbData, pSignedMessage^.cbData);
-   WriteFileContent(
-      SigPath,
-      @pem[1],
-      Length(pem));
-
-
-
   finally
-    if Assigned(SignPara.rgpMsgCert) then
-      FreeMem(SignPara.rgpMsgCert);
-    if pChainContext <> nil then
-      CertFreeCertificateChain(pChainContext);
-    if pSignedMessage <> nil then
-      CadesFreeBlob(pSignedMessage);
-    if pCertContext <> nil then
-      CertFreeCertificateContext(pCertContext);
-    if hStore <> nil then
-      CertCloseStore(hStore, CERT_CLOSE_STORE_FORCE_FLAG);
+    if Assigned(SignPara.rgpMsgCert) then FreeMem(SignPara.rgpMsgCert);
+    if pChainContext <> nil          then CertFreeCertificateChain(pChainContext);
+    if pSignedMessage <> nil         then CadesFreeBlob(pSignedMessage);
+    if pCertContext <> nil           then CertFreeCertificateContext(pCertContext);
+    if hStore <> nil                 then CertCloseStore(hStore, CERT_CLOSE_STORE_FORCE_FLAG);
     Certs.Free;
   end;
 end;
@@ -737,16 +588,12 @@ end;
 //      Если не удалось записать содержимое файла
 //      Если были проблемы с подписанием, например, не подошёл пароль
 
-procedure SignFileStr(
-  const FilePath: string;
-  const SigPath: string;
-  const ThumbprintStr: string;
-  const Password: string);
-var
-  Thumbprint: T20Bytes;
+procedure SignFileStr(const FilePath: string; const SigPath: string; const ThumbprintStr: string; const Password: string);
+var Thumbprint: T20Bytes;
 begin
    Thumbprint := HexStringToT20Bytes(ThumbprintStr);
    SignFile(FilePath, SigPath, Thumbprint, Password);
 end;
+
 end.
 
