@@ -67,7 +67,7 @@ procedure InitializeCades;
 
 Загружает ```cades.dll```. Эта библиотека нужна при вызове ```SignFile/SignFileStr``` и она грузится динамически с помощью ```LoadLibrary```. См. выше соображения относительно установки.
 
-==== `InitializeCades`
+==== `FinalizeCades`
 
 [source,delphi]
 ----
